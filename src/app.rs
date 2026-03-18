@@ -21,6 +21,7 @@ pub struct App {
     pub show_help: bool,
     pub status_message: Option<String>,
     pub loading: bool,
+    pub status_shown: bool,
 }
 
 impl App {
@@ -38,6 +39,7 @@ impl App {
             show_help: false,
             status_message: None,
             loading: false,
+            status_shown: false,
         }
     }
 
@@ -62,8 +64,8 @@ impl App {
         self.loading = false;
     }
 
-    pub fn current_manager(&self) -> Option<&Box<dyn PackageManager>> {
-        self.managers.get(self.selected_manager)
+    pub fn current_manager(&self) -> Option<&dyn PackageManager> {
+        self.managers.get(self.selected_manager).map(|m| m.as_ref())
     }
 
     pub fn current_tools(&self) -> Vec<&Tool> {
@@ -193,5 +195,14 @@ impl App {
         self.search_active = false;
         self.selected_tool = 0;
         self.load_tools();
+    }
+
+    pub fn maybe_clear_status(&mut self) {
+        if self.status_shown {
+            self.status_message = None;
+            self.status_shown = false;
+        } else if self.status_message.is_some() {
+            self.status_shown = true;
+        }
     }
 }

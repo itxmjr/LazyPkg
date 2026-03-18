@@ -47,7 +47,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let list = List::new(items).block(block);
 
     let mut state = ListState::default();
-    state.select(Some(app.selected_manager));
+    if !app.managers.is_empty() {
+        state.select(Some(app.selected_manager));
+    }
 
     frame.render_stateful_widget(list, area, &mut state);
 }

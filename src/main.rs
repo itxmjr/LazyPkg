@@ -53,6 +53,7 @@ fn run_app<B: ratatui::backend::Backend>(
     app: &mut App,
 ) -> Result<()> {
     loop {
+        app.maybe_clear_status();
         ui::draw(terminal, app)?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
