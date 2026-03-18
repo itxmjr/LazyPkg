@@ -5,17 +5,14 @@ mod cheatsheet;
 mod snapshot;
 
 use anyhow::Result;
+use app::{App, Panel};
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Style},
-    text::Text,
-    widgets::{Block, Borders, Paragraph},
     Terminal,
 };
 use std::io::stdout;
@@ -36,8 +33,12 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Run the app
-    let result = run_app(&mut terminal);
+    // Initialize app
+    let mut app = App::new();
+    app.load_tools();
+
+    // Run the event loop
+    let result = run_app(&mut terminal, &mut app);
 
     // Restore terminal
     disable_raw_mode()?;
@@ -47,28 +48,134 @@ fn main() -> Result<()> {
     result
 }
 
-fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+fn run_app<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+) -> Result<()> {
     loop {
-        terminal.draw(|frame| {
-            let size = frame.area();
-
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(100)])
-                .split(size);
-
-            let paragraph = Paragraph::new(Text::raw("lazypkg - loading..."))
-                .block(Block::default().title("lazypkg").borders(Borders::ALL))
-                .style(Style::default().fg(Color::White))
-                .alignment(Alignment::Center);
-
-            frame.render_widget(paragraph, chunks[0]);
-        })?;
+        ui::draw(terminal, app);
 
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                if key.code == KeyCode::Char('q') {
-                    return Ok(());
+                // Handle search input mode first
+                if app.search_active {
+                    match key.code {
+                        KeyCode::Esc => {
+                            app.search_query.clear();
+                            app.search_active = false;
+                            app.selected_tool = 0;
+                        }
+                        KeyCode::Backspace => {
+                            app.search_query.pop();
+                            app.selected_tool = 0;
+                        }
+                        KeyCode::Char(c) => {
+                            app.search_query.push(c);
+                            app.selected_tool = 0;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                // Global keybinds (non-search mode)
+                match key.code {
+                    // Quit
+                    KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        return Ok(());
+                    }
+
+                    // Navigation down
+                    KeyCode::Char('j') | KeyCode::Down => match app.active_panel {
+                        Panel::Managers => app.next_manager(),
+                        Panel::Tools | Panel::Cheatsheet => app.next_tool(),
+                    },
+
+                    // Navigation up
+                    KeyCode::Char('k') | KeyCode::Up => match app.active_panel {
+                        Panel::Managers => app.prev_manager(),
+                        Panel::Tools | Panel::Cheatsheet => app.prev_tool(),
+                    },
+
+                    // Navigate left (previous panel)
+                    KeyCode::Char('h') | KeyCode::Left => match app.active_panel {
+                        Panel::Managers => {} // nothing
+                        Panel::Tools => app.active_panel = Panel::Managers,
+                        Panel::Cheatsheet => app.active_panel = Panel::Tools,
+                    },
+
+                    // Navigate right / Tab (next panel)
+                    KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => {
+                        match app.active_panel {
+                            Panel::Managers => app.active_panel = Panel::Tools,
+                            Panel::Tools => app.active_panel = Panel::Cheatsheet,
+                            Panel::Cheatsheet => {} // nothing
+                        }
+                    }
+
+                    // Enter: on Tools panel → switch to Cheatsheet
+                    KeyCode::Enter => {
+                        if app.active_panel == Panel::Tools {
+                            app.active_panel = Panel::Cheatsheet;
+                        }
+                    }
+
+                    // Delete selected tool
+                    KeyCode::Char('d') => {
+                        if app.active_panel == Panel::Tools && !app.search_active {
+                            app.show_confirm_delete = true;
+                        }
+                    }
+
+                    // Refresh
+                    KeyCode::Char('r') => app.refresh(),
+
+                    // Activate search
+                    KeyCode::Char('/') => {
+                        app.search_active = true;
+                    }
+
+                    // Escape
+                    KeyCode::Esc => {
+                        if app.show_confirm_delete {
+                            app.show_confirm_delete = false;
+                        }
+                    }
+
+                    // Confirm delete
+                    KeyCode::Char('y') => {
+                        if app.show_confirm_delete {
+                            if let Err(e) = app.delete_selected_tool() {
+                                app.status_message = Some(format!("Error: {}", e));
+                            }
+                            app.show_confirm_delete = false;
+                        }
+                    }
+
+                    // Dismiss delete
+                    KeyCode::Char('n') => {
+                        if app.show_confirm_delete {
+                            app.show_confirm_delete = false;
+                        }
+                    }
+
+                    // Export snapshot (stub)
+                    KeyCode::Char('e') => {
+                        app.status_message = Some("Export snapshot: not yet implemented".to_string());
+                    }
+
+                    // Import snapshot (stub)
+                    KeyCode::Char('i') => {
+                        app.status_message = Some("Import snapshot: not yet implemented".to_string());
+                    }
+
+                    // Toggle help
+                    KeyCode::Char('?') => {
+                        app.show_help = !app.show_help;
+                    }
+
+                    _ => {}
                 }
             }
         }
