@@ -62,6 +62,7 @@ impl App {
             }
         }
         self.loading = false;
+        self.load_cheatsheet();
     }
 
     pub fn current_manager(&self) -> Option<&dyn PackageManager> {
@@ -91,6 +92,16 @@ impl App {
         tools.get(self.selected_tool).copied()
     }
 
+    pub fn load_cheatsheet(&mut self) {
+        if let Some(tool) = self.selected_tool_item() {
+            let name = tool.name.clone();
+            self.cheatsheet = Some(format!("Loading {}...", name));
+            // For v1: blocking load (will block UI briefly but acceptable)
+            self.cheatsheet = crate::cheatsheet::load_cheatsheet(&name)
+                .or_else(|| Some(format!("No cheatsheet found for '{}'", name)));
+        }
+    }
+
     pub fn next_tool(&mut self) {
         let count = self.current_tools().len();
         if count == 0 {
@@ -101,6 +112,7 @@ impl App {
         } else {
             self.selected_tool = 0;
         }
+        self.load_cheatsheet();
     }
 
     pub fn prev_tool(&mut self) {
@@ -113,6 +125,7 @@ impl App {
         } else {
             self.selected_tool = count - 1;
         }
+        self.load_cheatsheet();
     }
 
     pub fn next_manager(&mut self) {
@@ -126,6 +139,7 @@ impl App {
             self.selected_manager = 0;
         }
         self.selected_tool = 0;
+        self.load_cheatsheet();
     }
 
     pub fn prev_manager(&mut self) {
@@ -139,6 +153,7 @@ impl App {
             self.selected_manager = count - 1;
         }
         self.selected_tool = 0;
+        self.load_cheatsheet();
     }
 
     pub fn delete_selected_tool(&mut self) -> anyhow::Result<()> {
