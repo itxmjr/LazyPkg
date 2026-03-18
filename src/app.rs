@@ -53,7 +53,8 @@ impl App {
                 Ok(tools) => {
                     self.tools_by_manager.insert(manager.name().to_string(), tools);
                 }
-                Err(_) => {
+                Err(e) => {
+                    self.status_message = Some(format!("{}: {}", manager.name(), e));
                     self.tools_by_manager.insert(manager.name().to_string(), Vec::new());
                 }
             }

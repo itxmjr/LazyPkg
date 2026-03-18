@@ -9,5 +9,6 @@ pub mod theme;
 pub fn draw<B: ratatui::backend::Backend>(
     _terminal: &mut ratatui::Terminal<B>,
     _app: &crate::app::App,
-) {
+) -> anyhow::Result<()> {
+    Ok(())
 }

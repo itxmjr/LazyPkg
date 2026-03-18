@@ -53,7 +53,7 @@ fn run_app<B: ratatui::backend::Backend>(
     app: &mut App,
 ) -> Result<()> {
     loop {
-        ui::draw(terminal, app);
+        ui::draw(terminal, app)?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
@@ -123,13 +123,17 @@ fn run_app<B: ratatui::backend::Backend>(
 
                     // Delete selected tool
                     KeyCode::Char('d') => {
-                        if app.active_panel == Panel::Tools && !app.search_active {
+                        if !app.show_confirm_delete && app.active_panel == Panel::Tools {
                             app.show_confirm_delete = true;
                         }
                     }
 
                     // Refresh
-                    KeyCode::Char('r') => app.refresh(),
+                    KeyCode::Char('r') => {
+                        if !app.show_confirm_delete {
+                            app.refresh();
+                        }
+                    }
 
                     // Activate search
                     KeyCode::Char('/') => {
