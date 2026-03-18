@@ -216,6 +216,13 @@ impl App {
         self.load_tools();
     }
 
+    pub fn export_snapshot(&mut self) -> anyhow::Result<String> {
+        let path = crate::snapshot::export::export_snapshot()?;
+        let msg = format!("Exported to {}", path.display());
+        self.status_message = Some(msg.clone());
+        Ok(msg)
+    }
+
     pub fn maybe_clear_status(&mut self) {
         if self.status_shown {
             self.status_message = None;

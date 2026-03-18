@@ -175,14 +175,17 @@ fn run_app<B: ratatui::backend::Backend>(
                         }
                     }
 
-                    // Export snapshot (stub)
+                    // Export snapshot
                     KeyCode::Char('e') => {
-                        app.status_message = Some("Export snapshot: not yet implemented".to_string());
+                        match app.export_snapshot() {
+                            Ok(_) => {}
+                            Err(e) => app.status_message = Some(format!("Export failed: {}", e)),
+                        }
                     }
 
-                    // Import snapshot (stub)
+                    // Import snapshot (CLI only in v1)
                     KeyCode::Char('i') => {
-                        app.status_message = Some("Import snapshot: not yet implemented".to_string());
+                        app.status_message = Some("Use 'lazypkg import' from command line to import".to_string());
                     }
 
                     // Toggle help
