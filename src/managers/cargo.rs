@@ -11,9 +11,13 @@ impl CargoManager {
     }
 
     fn crates_toml_path() -> Option<PathBuf> {
-        std::env::var("HOME").ok().map(|home| {
-            PathBuf::from(home).join(".cargo").join(".crates.toml")
-        })
+        // First try CARGO_HOME
+        if let Ok(cargo_home) = std::env::var("CARGO_HOME") {
+            return Some(std::path::PathBuf::from(cargo_home).join(".crates.toml"));
+        }
+        // Fall back to HOME
+        std::env::var("HOME").ok()
+            .map(|h| std::path::PathBuf::from(h).join(".cargo").join(".crates.toml"))
     }
 
     /// Parse a crates.toml key of the form `"name version (registry...)"` into (name, version).
@@ -35,8 +39,10 @@ impl PackageManager for CargoManager {
     }
 
     fn is_available(&self) -> bool {
-        Self::crates_toml_path()
-            .map(|p| p.exists())
+        std::process::Command::new("cargo")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
             .unwrap_or(false)
     }
 
@@ -44,8 +50,11 @@ impl PackageManager for CargoManager {
         let path = Self::crates_toml_path()
             .context("Could not determine HOME directory")?;
 
-        let contents = std::fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read {}", path.display()))?;
+        let contents = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+            Err(e) => return Err(anyhow::Error::from(e).context(format!("Failed to read {}", path.display()))),
+        };
 
         let doc: toml::Value = contents
             .parse::<toml::Value>()
