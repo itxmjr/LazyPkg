@@ -131,7 +131,10 @@ fn run_app<B: ratatui::backend::Backend>(
 
                     // Delete selected tool
                     KeyCode::Char('d') => {
-                        if !app.show_confirm_delete && app.active_panel == Panel::Tools {
+                        if !app.show_confirm_delete
+                            && app.active_panel == Panel::Tools
+                            && app.selected_tool_item().is_some()
+                        {
                             app.show_confirm_delete = true;
                         }
                     }

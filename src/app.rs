@@ -205,6 +205,7 @@ impl App {
             self.selected_tool = 0;
         }
 
+        self.status_message = Some(format!("Deleted '{}'", tool_name));
         Ok(())
     }
 
