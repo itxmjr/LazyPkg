@@ -1,7 +1,12 @@
 use anyhow::Result;
 
 pub mod cargo;
-pub use cargo::CargoManager;
+pub mod dnf;
+pub mod npm;
+pub mod pip;
+pub mod pipx;
+pub mod pnpm;
+
 
 pub struct Tool {
     pub name: String,
@@ -20,6 +25,11 @@ pub trait PackageManager: Send + Sync {
 
 pub fn all_managers() -> Vec<Box<dyn PackageManager>> {
     vec![
-        Box::new(CargoManager::new()),
+        Box::new(cargo::CargoManager::new()),
+        Box::new(dnf::DnfManager::new()),
+        Box::new(pipx::PipxManager::new()),
+        Box::new(pip::PipManager::new()),
+        Box::new(npm::NpmManager::new()),
+        Box::new(pnpm::PnpmManager::new()),
     ]
 }
