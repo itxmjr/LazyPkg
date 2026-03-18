@@ -10,11 +10,19 @@ impl PipManager {
         PipManager
     }
 
-    /// Return the first pip binary found (pip, then pip3).
-    fn pip_binary() -> &'static str {
-        // We check availability at runtime; for command construction we try pip first.
-        // The is_available() method handles the fallback check.
-        "pip"
+    /// Find which pip binary is available (pip or pip3).
+    fn find_pip_binary() -> Option<&'static str> {
+        for binary in ["pip", "pip3"] {
+            if std::process::Command::new(binary)
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                return Some(binary);
+            }
+        }
+        None
     }
 
     fn parse_json(json: &str) -> Result<Vec<Tool>> {
@@ -68,55 +76,34 @@ impl PackageManager for PipManager {
     }
 
     fn is_available(&self) -> bool {
-        let pip_ok = std::process::Command::new("pip")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if pip_ok {
-            return true;
-        }
-        std::process::Command::new("pip3")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        Self::find_pip_binary().is_some()
     }
 
     fn list_installed(&self) -> Result<Vec<Tool>> {
-        // Try pip first, fall back to pip3
-        match Self::run_pip_list(Self::pip_binary()) {
-            Ok(tools) => Ok(tools),
-            Err(_) => Self::run_pip_list("pip3"),
-        }
+        let binary = Self::find_pip_binary().unwrap_or("pip");
+        Self::run_pip_list(binary)
     }
 
     fn uninstall(&self, tool: &Tool) -> Result<()> {
-        let try_uninstall = |binary: &str| -> Result<bool> {
-            let status = std::process::Command::new(binary)
-                .args(["uninstall", "-y", &tool.name])
-                .status()
-                .with_context(|| format!("failed to run {} uninstall", binary))?;
-            Ok(status.success())
-        };
-
-        if try_uninstall("pip")? {
-            return Ok(());
-        }
-        let ok = try_uninstall("pip3")?;
-        if !ok {
+        let binary = Self::find_pip_binary().unwrap_or("pip");
+        let status = std::process::Command::new(binary)
+            .args(["uninstall", "-y", &tool.name])
+            .status()
+            .with_context(|| format!("failed to run {} uninstall", binary))?;
+        if !status.success() {
             anyhow::bail!("pip uninstall {} failed", tool.name);
         }
         Ok(())
     }
 
     fn install(&self, name: &str) -> Result<()> {
-        let status = std::process::Command::new("pip")
+        let binary = Self::find_pip_binary().unwrap_or("pip");
+        let status = std::process::Command::new(binary)
             .args(["install", "--user", name])
             .status()
-            .context("failed to run pip install")?;
+            .with_context(|| format!("failed to run {} install", binary))?;
         if !status.success() {
-            anyhow::bail!("pip install {} failed with status {}", name, status);
+            anyhow::bail!("{} install {} failed with status {}", binary, name, status);
         }
         Ok(())
     }
