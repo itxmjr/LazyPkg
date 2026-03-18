@@ -37,28 +37,45 @@ impl CheatsheetProvider for HelpProvider {
 }
 
 fn strip_ansi(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            // Check for ESC [ sequence
-            if chars.peek() == Some(&'[') {
-                chars.next(); // consume '['
-                // Skip until we hit a letter (the command terminator)
-                for next in chars.by_ref() {
-                    if next.is_ascii_alphabetic() {
-                        break;
+    let bytes = s.as_bytes();
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b {
+            i += 1;
+            if i >= bytes.len() { break; }
+            match bytes[i] {
+                b'[' => {
+                    // CSI sequence - skip until final byte (0x40-0x7E)
+                    i += 1;
+                    while i < bytes.len() && !(0x40..=0x7E).contains(&bytes[i]) {
+                        i += 1;
+                    }
+                    i += 1; // skip final byte
+                }
+                b']' => {
+                    // OSC sequence - skip until BEL or ST (ESC \)
+                    i += 1;
+                    while i < bytes.len() {
+                        if bytes[i] == 0x07 {
+                            i += 1; // BEL terminator
+                            break;
+                        } else if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                            i += 2; // ST terminator
+                            break;
+                        }
+                        i += 1;
                     }
                 }
-            } else {
-                // Other ESC sequences - skip the next char
-                chars.next();
+                _ => {
+                    // Other ESC sequences - skip one char
+                    i += 1;
+                }
             }
         } else {
-            result.push(c);
+            result.push(bytes[i]);
+            i += 1;
         }
     }
-
-    result
+    String::from_utf8_lossy(&result).into_owned()
 }

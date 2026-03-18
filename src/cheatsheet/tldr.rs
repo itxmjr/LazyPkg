@@ -22,32 +22,42 @@ impl CheatsheetProvider for TldrProvider {
     }
 }
 
-fn check_local_cache(tool_name: &str) -> Option<String> {
-    let home = std::env::var("HOME").ok()?;
+fn tealdeer_cache_paths(tool_name: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
 
-    let candidates = vec![
-        // Current tealdeer cache location
-        format!(
-            "{}/.local/share/tealdeer/tldr-pages/pages/common/{}.md",
-            home, tool_name
-        ),
-        format!(
-            "{}/.local/share/tealdeer/tldr-pages/pages/linux/{}.md",
-            home, tool_name
-        ),
-        // Older tealdeer cache location
-        format!("{}/.cache/tealdeer/{}.md", home, tool_name),
-    ];
+    // Check XDG_DATA_HOME first (XDG spec)
+    let data_home = std::env::var("XDG_DATA_HOME").ok()
+        .map(PathBuf::from)
+        .or_else(|| std::env::var("HOME").ok()
+            .map(|h| PathBuf::from(h).join(".local").join("share")));
 
-    for path_str in candidates {
-        let path = PathBuf::from(&path_str);
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                return Some(content);
-            }
-        }
+    if let Some(data_home) = data_home {
+        let base = data_home.join("tealdeer").join("tldr-pages").join("pages");
+        paths.push(base.join("common").join(format!("{}.md", tool_name)));
+        paths.push(base.join("linux").join(format!("{}.md", tool_name)));
     }
 
+    // XDG_CACHE_HOME (older tealdeer versions)
+    let cache_home = std::env::var("XDG_CACHE_HOME").ok()
+        .map(PathBuf::from)
+        .or_else(|| std::env::var("HOME").ok()
+            .map(|h| PathBuf::from(h).join(".cache")));
+
+    if let Some(cache_home) = cache_home {
+        paths.push(cache_home.join("tealdeer").join(format!("{}.md", tool_name)));
+    }
+
+    paths
+}
+
+fn check_local_cache(tool_name: &str) -> Option<String> {
+    for path in tealdeer_cache_paths(tool_name) {
+        match std::fs::read_to_string(&path) {
+            Ok(content) => return Some(content),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => continue,
+        }
+    }
     None
 }
 

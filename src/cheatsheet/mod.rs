@@ -9,13 +9,24 @@ pub trait CheatsheetProvider {
 
 /// Load cheatsheet for a tool: tries tldr first, falls back to --help
 pub fn load_cheatsheet(tool_name: &str) -> Option<String> {
-    // Try tldr first
     let tldr = tldr::TldrProvider::new();
-    if let Ok(Some(content)) = tldr.fetch(tool_name) {
-        return Some(content);
+    match tldr.fetch(tool_name) {
+        Ok(Some(content)) => return Some(content),
+        Ok(None) => {} // No tldr page, try --help
+        Err(e) => {
+            // Try --help as fallback but also note the tldr error
+            let help = help::HelpProvider::new();
+            if let Ok(Some(content)) = help.fetch(tool_name) {
+                return Some(content);
+            }
+            return Some(format!("[tldr error: {}]\n\nNo --help output found either.", e));
+        }
     }
 
-    // Fallback to --help
     let help = help::HelpProvider::new();
-    help.fetch(tool_name).ok().flatten()
+    match help.fetch(tool_name) {
+        Ok(Some(content)) => Some(content),
+        Ok(None) => None,
+        Err(e) => Some(format!("Error loading cheatsheet: {}", e)),
+    }
 }

@@ -103,14 +103,20 @@ fn run_app<B: ratatui::backend::Backend>(
                     KeyCode::Char('h') | KeyCode::Left => match app.active_panel {
                         Panel::Managers => {} // nothing
                         Panel::Tools => app.active_panel = Panel::Managers,
-                        Panel::Cheatsheet => app.active_panel = Panel::Tools,
+                        Panel::Cheatsheet => {
+                            app.active_panel = Panel::Tools;
+                            app.cheatsheet = None;
+                        }
                     },
 
                     // Navigate right / Tab (next panel)
                     KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => {
                         match app.active_panel {
                             Panel::Managers => app.active_panel = Panel::Tools,
-                            Panel::Tools => app.active_panel = Panel::Cheatsheet,
+                            Panel::Tools => {
+                                app.active_panel = Panel::Cheatsheet;
+                                app.load_cheatsheet();
+                            }
                             Panel::Cheatsheet => {} // nothing
                         }
                     }
@@ -119,6 +125,7 @@ fn run_app<B: ratatui::backend::Backend>(
                     KeyCode::Enter => {
                         if app.active_panel == Panel::Tools {
                             app.active_panel = Panel::Cheatsheet;
+                            app.load_cheatsheet();
                         }
                     }
 

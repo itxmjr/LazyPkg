@@ -95,7 +95,6 @@ impl App {
     pub fn load_cheatsheet(&mut self) {
         if let Some(tool) = self.selected_tool_item() {
             let name = tool.name.clone();
-            self.cheatsheet = Some(format!("Loading {}...", name));
             // For v1: blocking load (will block UI briefly but acceptable)
             self.cheatsheet = crate::cheatsheet::load_cheatsheet(&name)
                 .or_else(|| Some(format!("No cheatsheet found for '{}'", name)));
@@ -112,7 +111,8 @@ impl App {
         } else {
             self.selected_tool = 0;
         }
-        self.load_cheatsheet();
+        // Clear stale cheatsheet; it will reload when user navigates to Cheatsheet panel
+        self.cheatsheet = None;
     }
 
     pub fn prev_tool(&mut self) {
@@ -125,7 +125,8 @@ impl App {
         } else {
             self.selected_tool = count - 1;
         }
-        self.load_cheatsheet();
+        // Clear stale cheatsheet; it will reload when user navigates to Cheatsheet panel
+        self.cheatsheet = None;
     }
 
     pub fn next_manager(&mut self) {
@@ -139,7 +140,8 @@ impl App {
             self.selected_manager = 0;
         }
         self.selected_tool = 0;
-        self.load_cheatsheet();
+        // Clear stale cheatsheet; it will reload when user navigates to Cheatsheet panel
+        self.cheatsheet = None;
     }
 
     pub fn prev_manager(&mut self) {
@@ -153,7 +155,8 @@ impl App {
             self.selected_manager = count - 1;
         }
         self.selected_tool = 0;
-        self.load_cheatsheet();
+        // Clear stale cheatsheet; it will reload when user navigates to Cheatsheet panel
+        self.cheatsheet = None;
     }
 
     pub fn delete_selected_tool(&mut self) -> anyhow::Result<()> {
