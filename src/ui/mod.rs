@@ -55,10 +55,60 @@ pub fn draw<B: ratatui::backend::Backend>(
         // popups (drawn last, on top)
         if app.show_confirm_delete {
             confirm::render(frame, app);
-        }
-        if app.show_help {
-            // Task 10 - stub for now
+        } else if app.show_help {
+            let overlay_area = centered_rect(50, 60, area);
+            frame.render_widget(ratatui::widgets::Clear, overlay_area);
+
+            let help_text = vec![
+                ratatui::text::Line::from(ratatui::text::Span::styled(" Keyboard Shortcuts ", Style::default().fg(theme::SELECTED).add_modifier(ratatui::style::Modifier::BOLD))),
+                ratatui::text::Line::from(""),
+                ratatui::text::Line::from("  j / k / ↑ / ↓  : Navigate list"),
+                ratatui::text::Line::from("  h / l / ← / →  : Navigate panels"),
+                ratatui::text::Line::from("  Tab            : Next panel"),
+                ratatui::text::Line::from("  Enter          : Open cheatsheet"),
+                ratatui::text::Line::from("  d              : Delete selected tool"),
+                ratatui::text::Line::from("  r              : Refresh installed tools"),
+                ratatui::text::Line::from("  /              : Search tools"),
+                ratatui::text::Line::from("  e              : Export snapshot"),
+                ratatui::text::Line::from("  i              : Import snapshot (CLI only)"),
+                ratatui::text::Line::from("  ?              : Toggle this help menu"),
+                ratatui::text::Line::from("  q / Ctrl+C     : Quit"),
+                ratatui::text::Line::from(""),
+                ratatui::text::Line::from(ratatui::text::Span::styled(" Press ? or Esc to close ", Style::default().fg(theme::DIM))),
+            ];
+
+            let block = Block::default()
+                .title(" Help ")
+                .borders(ratatui::widgets::Borders::ALL)
+                .style(Style::default().bg(theme::BG))
+                .border_style(Style::default().fg(theme::BORDER_ACTIVE));
+
+            let paragraph = Paragraph::new(help_text)
+                .block(block)
+                .alignment(ratatui::layout::Alignment::Left);
+
+            frame.render_widget(paragraph, overlay_area);
         }
     })?;
     Ok(())
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([
+            ratatui::layout::Constraint::Percentage((100 - percent_y) / 2),
+            ratatui::layout::Constraint::Percentage(percent_y),
+            ratatui::layout::Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Horizontal)
+        .constraints([
+            ratatui::layout::Constraint::Percentage((100 - percent_x) / 2),
+            ratatui::layout::Constraint::Percentage(percent_x),
+            ratatui::layout::Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }

@@ -30,8 +30,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .border_style(Style::default().fg(border_color));
 
     if app.loading {
-        let paragraph = Paragraph::new("Loading...")
-            .style(Style::default().fg(theme::DIM))
+        let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let curr_frame = frames[app.spinner_tick % frames.len()];
+        let paragraph = Paragraph::new(format!("{} Loading...", curr_frame))
+            .style(Style::default().fg(theme::SELECTED))
             .block(block);
         frame.render_widget(paragraph, area);
         return;

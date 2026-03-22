@@ -22,6 +22,7 @@ pub struct App {
     pub status_message: Option<String>,
     pub loading: bool,
     pub status_shown: bool,
+    pub spinner_tick: usize,
 }
 
 impl App {
@@ -40,6 +41,7 @@ impl App {
             status_message: None,
             loading: false,
             status_shown: false,
+            spinner_tick: 0,
         }
     }
 
@@ -229,6 +231,12 @@ impl App {
             self.status_shown = false;
         } else if self.status_message.is_some() {
             self.status_shown = true;
+        }
+    }
+
+    pub fn tick_spinner(&mut self) {
+        if self.loading {
+            self.spinner_tick = self.spinner_tick.wrapping_add(1);
         }
     }
 }
