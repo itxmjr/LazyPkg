@@ -50,7 +50,22 @@ fn tealdeer_cache_paths(tool_name: &str) -> Vec<PathBuf> {
     paths
 }
 
+fn lazypkg_cache_path(tool_name: &str) -> PathBuf {
+    let cache_home = std::env::var("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".cache"));
+    cache_home.join("lazypkg").join("cheatsheets").join(format!("{}.md", tool_name))
+}
+
 fn check_local_cache(tool_name: &str) -> Option<String> {
+    // Check our own cache first
+    let lazy_path = lazypkg_cache_path(tool_name);
+    if lazy_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&lazy_path) {
+            return Some(content);
+        }
+    }
+
     for path in tealdeer_cache_paths(tool_name) {
         match std::fs::read_to_string(&path) {
             Ok(content) => return Some(content),
@@ -59,6 +74,14 @@ fn check_local_cache(tool_name: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn save_to_cache(tool_name: &str, content: &str) {
+    let path = lazypkg_cache_path(tool_name);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, content);
 }
 
 fn fetch_from_github(tool_name: &str) -> Result<Option<String>> {
@@ -73,7 +96,9 @@ fn fetch_from_github(tool_name: &str) -> Result<Option<String>> {
     );
     let response = client.get(&url).send()?;
     if response.status().is_success() {
-        return Ok(Some(response.text()?));
+        let text = response.text()?;
+        save_to_cache(tool_name, &text);
+        return Ok(Some(text));
     }
 
     // Try linux page
@@ -83,7 +108,9 @@ fn fetch_from_github(tool_name: &str) -> Result<Option<String>> {
     );
     let response = client.get(&url).send()?;
     if response.status().is_success() {
-        return Ok(Some(response.text()?));
+        let text = response.text()?;
+        save_to_cache(tool_name, &text);
+        return Ok(Some(text));
     }
 
     Ok(None)
