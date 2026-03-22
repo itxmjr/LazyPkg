@@ -78,7 +78,13 @@ impl PackageManager for NpmManager {
             .status()
             .context("failed to run npm uninstall")?;
         if !status.success() {
-            anyhow::bail!("npm uninstall {} failed with status {}", tool.name, status);
+            let status_pkexec = std::process::Command::new("pkexec")
+                .args(["npm", "uninstall", "-g", &tool.name])
+                .status()
+                .context("failed to run pkexec npm uninstall")?;
+            if !status_pkexec.success() {
+                anyhow::bail!("npm uninstall {} failed", tool.name);
+            }
         }
         Ok(())
     }

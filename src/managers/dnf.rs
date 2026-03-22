@@ -68,10 +68,10 @@ impl PackageManager for DnfManager {
     }
 
     fn uninstall(&self, tool: &Tool) -> Result<()> {
-        let status = std::process::Command::new("dnf")
-            .args(["remove", "-y", &tool.name])
+        let status = std::process::Command::new("pkexec")
+            .args(["dnf", "remove", "-y", &tool.name])
             .status()
-            .context("failed to run dnf remove")?;
+            .context("failed to run pkexec dnf remove")?;
         if !status.success() {
             anyhow::bail!("dnf remove {} failed with status {}", tool.name, status);
         }

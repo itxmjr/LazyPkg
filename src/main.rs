@@ -250,6 +250,13 @@ fn run_app<B: ratatui::backend::Backend>(
                         }
                     }
 
+                    // Force Refresh Cheatsheet
+                    KeyCode::Char('R') => {
+                        if !app.show_confirm_delete && (app.active_panel == Panel::Tools || app.active_panel == Panel::Cheatsheet) {
+                            app.force_refresh_cheatsheet();
+                        }
+                    }
+
                     // Activate search
                     KeyCode::Char('/') => {
                         app.search_active = true;

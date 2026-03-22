@@ -5,6 +5,7 @@ use crate::managers::{PackageManager, Tool, all_managers};
 pub enum AppEvent {
     ManagerLoaded(String, Result<Vec<Tool>, String>),
     CheatsheetLoaded(String, String),
+    UninstallCompleted(String, String, Result<(), String>),
 }
 
 #[derive(Clone, PartialEq)]
@@ -114,6 +115,30 @@ impl App {
                         }
                     }
                 }
+                AppEvent::UninstallCompleted(m_name, t_name, result) => {
+                    self.loading = false;
+                    match result {
+                        Ok(()) => {
+                            if let Some(tools) = self.tools_by_manager.get_mut(&m_name) {
+                                tools.retain(|t| t.name != t_name);
+                            }
+                            let count = self.current_tools().len();
+                            if self.selected_tool >= count && count > 0 {
+                                self.selected_tool = count - 1;
+                            } else if count == 0 {
+                                self.selected_tool = 0;
+                            }
+                            self.status_message = Some(format!("Deleted '{}'", t_name));
+                            self.cheatsheet = None;
+                            if self.active_panel == Panel::Tools {
+                                self.load_cheatsheet();
+                            }
+                        }
+                        Err(e) => {
+                            self.status_message = Some(format!("Failed to delete '{}': {}", t_name, e));
+                        }
+                    }
+                }
             }
         }
     }
@@ -160,6 +185,20 @@ impl App {
                     .unwrap_or_else(|| format!("No cheatsheet found for '{}'", name));
                 let _ = tx.send(AppEvent::CheatsheetLoaded(name, content));
             });
+        }
+    }
+
+    pub fn force_refresh_cheatsheet(&mut self) {
+        if let Some(tool) = self.selected_tool_item() {
+            let name = tool.name.clone();
+            let cache_home = std::env::var("XDG_CACHE_HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".cache"));
+            let cache_file = cache_home.join("lazypkg").join("cheatsheets").join(format!("{}.md", name));
+            let _ = std::fs::remove_file(cache_file);
+
+            self.cheatsheet = None;
+            self.load_cheatsheet();
         }
     }
 
@@ -226,7 +265,6 @@ impl App {
     }
 
     pub fn delete_selected_tool(&mut self) -> anyhow::Result<()> {
-        // Get the tool name and manager before modifying state
         let (tool_name, manager_name) = {
             let tool = match self.selected_tool_item() {
                 Some(t) => t,
@@ -235,43 +273,29 @@ impl App {
             (tool.name.clone(), tool.manager.clone())
         };
 
-        // Find the manager and run uninstall
-        let manager = self
-            .managers
-            .iter()
-            .find(|m| m.name() == manager_name)
-            .ok_or_else(|| anyhow::anyhow!("Manager not found: {}", manager_name))?;
-
-        // Build a temporary Tool for the uninstall call
-        let tool_ref = {
-            let tools = self.tools_by_manager.get(&manager_name);
-            tools
-                .and_then(|ts| ts.iter().find(|t| t.name == tool_name))
-                .map(|t| crate::managers::Tool {
-                    name: t.name.clone(),
-                    version: t.version.clone(),
-                    manager: t.manager.clone(),
-                })
+        let tool_obj = {
+            let tools = self.tools_by_manager.get(&manager_name).unwrap();
+            let t = tools.iter().find(|t| t.name == tool_name).unwrap();
+            crate::managers::Tool {
+                name: t.name.clone(),
+                version: t.version.clone(),
+                manager: t.manager.clone(),
+            }
         };
 
-        let tool_obj = tool_ref.ok_or_else(|| anyhow::anyhow!("Tool not found: {}", tool_name))?;
+        self.loading = true;
+        self.status_message = Some(format!("Uninstalling '{}'...", tool_name));
+        let tx = self.tx.clone();
 
-        manager.uninstall(&tool_obj)?;
+        tokio::task::spawn_blocking(move || {
+            let instance = crate::managers::all_managers()
+                .into_iter()
+                .find(|m| m.name() == manager_name)
+                .unwrap();
+            let res = instance.uninstall(&tool_obj).map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::UninstallCompleted(manager_name, tool_name, res));
+        });
 
-        // Remove from local cache
-        if let Some(tools) = self.tools_by_manager.get_mut(&manager_name) {
-            tools.retain(|t| t.name != tool_name);
-        }
-
-        // Clamp selected_tool
-        let count = self.current_tools().len();
-        if self.selected_tool >= count && count > 0 {
-            self.selected_tool = count - 1;
-        } else if count == 0 {
-            self.selected_tool = 0;
-        }
-
-        self.status_message = Some(format!("Deleted '{}'", tool_name));
         Ok(())
     }
 
