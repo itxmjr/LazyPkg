@@ -14,24 +14,53 @@ use ratatui::{
 };
 
 fn render_status_bar(frame: &mut Frame, app: &crate::app::App, area: Rect) {
-    let (text, style) = if let Some(ref msg) = app.status_message {
-        (
-            msg.as_str().to_string(),
+    if let Some(ref msg) = app.status_message {
+        let p = Paragraph::new(ratatui::text::Line::from(ratatui::text::Span::styled(
+            msg.as_str(),
             Style::default().fg(theme::YELLOW).bg(theme::BG),
-        )
+        ))).block(Block::default().style(Style::default().bg(theme::BG)));
+        frame.render_widget(p, area);
     } else {
-        (
-            "j/k: navigate  h/l: switch panel  d: delete  /: search  e: export  q: quit"
-                .to_string(),
-            Style::default().fg(theme::DIM).bg(theme::BG),
-        )
-    };
+        let layout = ratatui::layout::Layout::default()
+            .direction(ratatui::layout::Direction::Horizontal)
+            .constraints([
+                ratatui::layout::Constraint::Min(0),
+                ratatui::layout::Constraint::Length(35),
+            ])
+            .split(area);
 
-    let paragraph = Paragraph::new(text)
-        .style(style)
-        .block(Block::default().style(Style::default().bg(theme::BG)));
+        let left_part = ratatui::text::Line::from(vec![
+            ratatui::text::Span::styled(
+                " nav: j/k | switch: h/l | del: d | search: / | export: e | quit: q | ?: keybindings",
+                Style::default().fg(theme::DIM).bg(theme::BG),
+            ),
+        ]);
 
-    frame.render_widget(paragraph, area);
+        let right_part = ratatui::text::Line::from(vec![
+            ratatui::text::Span::styled(
+                "Donate ",
+                Style::default().fg(ratatui::style::Color::Magenta).bg(theme::BG),
+            ),
+            ratatui::text::Span::styled(
+                "Ask_Question ",
+                Style::default().fg(theme::YELLOW).bg(theme::BG),
+            ),
+            ratatui::text::Span::styled(
+                env!("CARGO_PKG_VERSION"),
+                Style::default().fg(theme::DIM).bg(theme::BG),
+            ),
+        ]);
+
+        let left_p = Paragraph::new(left_part)
+            .block(Block::default().style(Style::default().bg(theme::BG)));
+        
+        let right_p = Paragraph::new(right_part)
+            .alignment(ratatui::layout::Alignment::Right)
+            .block(Block::default().style(Style::default().bg(theme::BG)));
+
+        frame.render_widget(left_p, layout[0]);
+        frame.render_widget(right_p, layout[1]);
+    }
 }
 
 pub fn draw<B: ratatui::backend::Backend>(
