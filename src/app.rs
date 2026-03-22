@@ -146,6 +146,9 @@ impl App {
     }
 
     pub fn load_cheatsheet(&mut self) {
+        if self.cheatsheet.is_some() {
+            return;
+        }
         if let Some(tool) = self.selected_tool_item() {
             let name = tool.name.clone();
             self.cheatsheet = None;
@@ -170,8 +173,10 @@ impl App {
         } else {
             self.selected_tool = 0;
         }
-        // Clear stale cheatsheet; it will reload when user navigates to Cheatsheet panel
         self.cheatsheet = None;
+        if self.active_panel == Panel::Tools {
+            self.load_cheatsheet();
+        }
     }
 
     pub fn prev_tool(&mut self) {
@@ -184,8 +189,10 @@ impl App {
         } else {
             self.selected_tool = count - 1;
         }
-        // Clear stale cheatsheet; it will reload when user navigates to Cheatsheet panel
         self.cheatsheet = None;
+        if self.active_panel == Panel::Tools {
+            self.load_cheatsheet();
+        }
     }
 
     pub fn next_manager(&mut self) {
