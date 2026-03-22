@@ -1,5 +1,11 @@
 use std::collections::HashMap;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use crate::managers::{PackageManager, Tool, all_managers};
+
+pub enum AppEvent {
+    ManagerLoaded(String, Result<Vec<Tool>, String>),
+    CheatsheetLoaded(String, String),
+}
 
 #[derive(Clone, PartialEq)]
 pub enum Panel {
@@ -23,10 +29,14 @@ pub struct App {
     pub loading: bool,
     pub status_shown: bool,
     pub spinner_tick: usize,
+    pub tx: Sender<AppEvent>,
+    pub rx: Receiver<AppEvent>,
+    pub managers_loading: usize,
 }
 
 impl App {
     pub fn new() -> Self {
+        let (tx, rx) = channel();
         App {
             managers: Vec::new(),
             tools_by_manager: HashMap::new(),
@@ -42,6 +52,9 @@ impl App {
             loading: false,
             status_shown: false,
             spinner_tick: 0,
+            tx,
+            rx,
+            managers_loading: 0,
         }
     }
 
@@ -52,19 +65,57 @@ impl App {
         self.managers = all.into_iter().filter(|m| m.is_available()).collect();
 
         self.tools_by_manager.clear();
+        self.managers_loading = self.managers.len();
+
+        if self.managers_loading == 0 {
+            self.loading = false;
+            return;
+        }
+
         for manager in &self.managers {
-            match manager.list_installed() {
-                Ok(tools) => {
-                    self.tools_by_manager.insert(manager.name().to_string(), tools);
+            let tx = self.tx.clone();
+            let m_name = manager.name().to_string();
+
+            tokio::task::spawn_blocking(move || {
+                let instance = crate::managers::all_managers()
+                    .into_iter()
+                    .find(|m| m.name() == m_name)
+                    .unwrap();
+                let res = instance.list_installed().map_err(|e| e.to_string());
+                let _ = tx.send(AppEvent::ManagerLoaded(m_name, res));
+            });
+        }
+    }
+
+    pub fn handle_events(&mut self) {
+        while let Ok(event) = self.rx.try_recv() {
+            match event {
+                AppEvent::ManagerLoaded(name, result) => {
+                    self.managers_loading = self.managers_loading.saturating_sub(1);
+                    match result {
+                        Ok(tools) => {
+                            self.tools_by_manager.insert(name, tools);
+                        }
+                        Err(e) => {
+                            self.status_message = Some(format!("{}: {}", name, e));
+                            self.tools_by_manager.insert(name, Vec::new());
+                        }
+                    }
+                    if self.managers_loading == 0 {
+                        self.loading = false;
+                        self.load_cheatsheet();
+                    }
                 }
-                Err(e) => {
-                    self.status_message = Some(format!("{}: {}", manager.name(), e));
-                    self.tools_by_manager.insert(manager.name().to_string(), Vec::new());
+                AppEvent::CheatsheetLoaded(tool_name, content) => {
+                    if let Some(t) = self.selected_tool_item() {
+                        if t.name == tool_name {
+                            self.cheatsheet = Some(content);
+                            self.loading = false;
+                        }
+                    }
                 }
             }
         }
-        self.loading = false;
-        self.load_cheatsheet();
     }
 
     pub fn current_manager(&self) -> Option<&dyn PackageManager> {
@@ -97,9 +148,15 @@ impl App {
     pub fn load_cheatsheet(&mut self) {
         if let Some(tool) = self.selected_tool_item() {
             let name = tool.name.clone();
-            // For v1: blocking load (will block UI briefly but acceptable)
-            self.cheatsheet = crate::cheatsheet::load_cheatsheet(&name)
-                .or_else(|| Some(format!("No cheatsheet found for '{}'", name)));
+            self.cheatsheet = None;
+            self.loading = true;
+            let tx = self.tx.clone();
+
+            tokio::task::spawn_blocking(move || {
+                let content = crate::cheatsheet::load_cheatsheet(&name)
+                    .unwrap_or_else(|| format!("No cheatsheet found for '{}'", name));
+                let _ = tx.send(AppEvent::CheatsheetLoaded(name, content));
+            });
         }
     }
 

@@ -31,17 +31,18 @@ enum Commands {
     },
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
         Some(Commands::Export) => {
             let path = crate::snapshot::export::export_snapshot()?;
             println!("Snapshot exported to: {}", path.display());
-            return Ok(());
+            Ok(())
         }
         Some(Commands::Import { file }) => {
-            let path = file.unwrap_or_else(|| crate::snapshot::export::default_snapshot_path());
+            let path = file.unwrap_or_else(crate::snapshot::export::default_snapshot_path);
             if !path.exists() {
                 eprintln!("Snapshot file not found: {}", path.display());
                 std::process::exit(1);
@@ -76,7 +77,7 @@ fn main() -> Result<()> {
                 println!("  ✓ Installed {}", pkg);
             }
             println!("\nInstalled {} packages.", installed.len());
-            return Ok(());
+            Ok(())
         }
         Some(Commands::List { manager }) => {
             let managers = crate::managers::all_managers();
@@ -98,7 +99,7 @@ fn main() -> Result<()> {
                     Err(e) => eprintln!("Error listing {} packages: {}", mgr.name(), e),
                 }
             }
-            return Ok(());
+            Ok(())
         }
         None => {
             // TUI mode only: setup panic hook to restore terminal
@@ -139,7 +140,7 @@ fn main() -> Result<()> {
             execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
             terminal.show_cursor()?;
 
-            return result;
+            result
         }
     }
 }
@@ -152,11 +153,14 @@ fn run_app<B: ratatui::backend::Backend>(
     use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 
     loop {
+        app.handle_events();
+        
         app.tick_spinner();
         app.maybe_clear_status();
         ui::draw(terminal, app)?;
 
-        if event::poll(std::time::Duration::from_millis(100))? {
+        // Decrease poll duration so we process async events faster
+        if event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 // Handle search input mode first
                 if app.search_active {
