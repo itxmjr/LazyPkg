@@ -19,16 +19,13 @@ pub fn export_snapshot() -> Result<PathBuf> {
 
     for manager in &managers {
         if manager.is_available() {
-            match manager.list_installed() {
-                Ok(tools) => {
-                    packages.insert(
-                        manager.name().to_string(),
-                        ManagerSnapshot {
-                            tools: tools.iter().map(|t| t.name.clone()).collect(),
-                        },
-                    );
-                }
-                Err(_) => {} // skip unavailable managers
+            if let Ok(tools) = manager.list_installed() {
+                packages.insert(
+                    manager.name().to_string(),
+                    ManagerSnapshot {
+                        tools: tools.iter().map(|t| t.name.clone()).collect(),
+                    },
+                );
             }
         }
     }

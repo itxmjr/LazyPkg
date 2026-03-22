@@ -69,13 +69,11 @@ impl PackageManager for PnpmManager {
             .output()
             .context("failed to run pnpm")?;
 
-        if !output.status.success() {
-            if output.stdout.is_empty() {
-                return Ok(vec![]);
-            }
-            // pnpm may output valid JSON even on non-zero exit, try to parse anyway
-            // (same as npm - pnpm can exit non-zero with valid JSON output)
+        if !output.status.success() && output.stdout.is_empty() {
+            return Ok(vec![]);
         }
+        // pnpm may output valid JSON even on non-zero exit, try to parse anyway
+        // (same as npm - pnpm can exit non-zero with valid JSON output)
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         if stdout.trim().is_empty() {

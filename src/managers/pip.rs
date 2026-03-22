@@ -12,17 +12,13 @@ impl PipManager {
 
     /// Find which pip binary is available (pip or pip3).
     fn find_pip_binary() -> Option<&'static str> {
-        for binary in ["pip", "pip3"] {
-            if std::process::Command::new(binary)
+        ["pip", "pip3"].into_iter().find(|&binary| {
+            std::process::Command::new(binary)
                 .arg("--version")
                 .output()
                 .map(|o| o.status.success())
                 .unwrap_or(false)
-            {
-                return Some(binary);
-            }
-        }
-        None
+        })
     }
 
     fn parse_json(json: &str) -> Result<Vec<Tool>> {
