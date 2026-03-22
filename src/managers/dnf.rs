@@ -9,40 +9,21 @@ impl DnfManager {
         DnfManager
     }
 
-    /// Parse output of `dnf list installed --quiet`.
-    ///
-    /// Lines look like:
-    ///   bat.x86_64                    0.24.0-3.fc41    @fedora
-    ///
-    /// We skip header lines and lines without a `.` in the first field.
+    /// Parse output of `dnf repoquery --userinstalled --qf "%{name} %{version}\n"`.
     fn parse_output(output: &str) -> Vec<Tool> {
         let mut tools = Vec::new();
         for line in output.lines() {
             let line = line.trim();
-            // Skip blank lines and known header/info lines
-            if line.is_empty()
-                || line.starts_with("Last metadata")
-                || line.starts_with("Installed Packages")
-            {
+            if line.is_empty() || line.starts_with("Updating and loading repositories:") || line.starts_with("Repositories loaded.") {
                 continue;
             }
 
             let mut cols = line.split_whitespace();
-            let name_arch = match cols.next() {
-                Some(s) => s,
+            let name = match cols.next() {
+                Some(s) => s.to_string(),
                 None => continue,
             };
             let version = cols.next().map(|v| v.to_string());
-
-            // Only accept lines where the first token contains a `.` (name.arch)
-            if !name_arch.contains('.') {
-                continue;
-            }
-
-            let name = match name_arch.split('.').next() {
-                Some(n) => n.to_string(),
-                None => continue,
-            };
 
             tools.push(Tool {
                 name,
@@ -74,7 +55,7 @@ impl PackageManager for DnfManager {
 
     fn list_installed(&self) -> Result<Vec<Tool>> {
         let output = std::process::Command::new("dnf")
-            .args(["list", "installed", "--quiet"])
+            .args(["repoquery", "--userinstalled", "--qf", "%{name} %{version}\\n"])
             .output()
             .context("failed to run dnf")?;
 
@@ -115,12 +96,7 @@ mod tests {
 
     #[test]
     fn test_parse_dnf_output_basic() {
-        let input = "\
-Last metadata expiration check: 0:01:23 ago on Wed Mar 18 2026.
-Installed Packages
-bat.x86_64                    0.24.0-3.fc41    @fedora
-ripgrep.x86_64                14.1.1-1.fc41    @fedora
-";
+        let input = "bat 0.24.0-3.fc41\nripgrep 14.1.1-1.fc41\n";
         let tools = DnfManager::parse_output(input);
         assert_eq!(tools.len(), 2);
         // sorted
@@ -131,29 +107,8 @@ ripgrep.x86_64                14.1.1-1.fc41    @fedora
     }
 
     #[test]
-    fn test_parse_dnf_skips_header_lines() {
-        let input = "\
-Installed Packages
-glibc.x86_64    2.40-1.fc41    @anaconda
-bash.x86_64     5.2.37-1.fc41  @anaconda
-";
-        let tools = DnfManager::parse_output(input);
-        assert_eq!(tools.len(), 2);
-        assert_eq!(tools[0].name, "bash");
-        assert_eq!(tools[1].name, "glibc");
-    }
-
-    #[test]
     fn test_parse_dnf_empty_output() {
         let tools = DnfManager::parse_output("");
         assert_eq!(tools.len(), 0);
-    }
-
-    #[test]
-    fn test_parse_dnf_no_dot_in_first_col_skipped() {
-        let input = "SomeHeaderLine without arch column\nbat.x86_64  0.24.0  @fedora\n";
-        let tools = DnfManager::parse_output(input);
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name, "bat");
     }
 }
