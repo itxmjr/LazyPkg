@@ -2,6 +2,11 @@
 name = "lazypkg"
 version = "0.1.0"
 edition = "2021"
+description = "A lazygit-style terminal UI to manage all your CLI tools across package managers (cargo, dnf, pip, npm, etc.)"
+license = "MIT"
+repository = "https://github.com/itxmjr/LazyPkg"
+keywords = ["tui", "package-manager", "cli", "rust"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 ratatui = "0.28"

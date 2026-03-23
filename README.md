@@ -13,12 +13,26 @@ No more wondering if that tool you used 3 months ago was installed via `pip3`, `
 - 📦 **Snapshot & Restore**: Export your entire toolchain setup across all package managers to a single `.toml` file and restore it on new machines!
 
 ## Installation 🛠️
-Ensure you have Rust installed, then install from source:
 
+The easiest way to install `lazypkg` is directly via `cargo`:
+
+### 1. From Crates.io (Recommended)
+Once published, anyone can install it with:
+```bash
+cargo install lazypkg
+```
+
+### 2. From GitHub (Latest Version)
+You can install the latest development version directly from the repository:
+```bash
+cargo install --git https://github.com/itxmjr/LazyPkg
+```
+
+### 3. From Source (Local Development)
+If you have cloned the repository locally:
 ```bash
 cargo install --path .
 ```
-*(GitHub Releases & Crates.io coming soon!)*
 
 ## Usage 💻
 Just type `lazypkg` into your terminal to launch the interactive UI!
