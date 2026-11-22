@@ -6,13 +6,14 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/itxmjr/LazyPkg/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/itxmjr/LazyPkg/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)
 
-**lazypkg** is a lazygit-style terminal UI that shows every command-line tool you installed globally, across **cargo, npm, pnpm, pip, pipx and dnf**, in one place. Use it to find out which package manager installed a tool, read its cheatsheet, uninstall it, or export your whole toolchain to one TOML file and reinstall it on a new machine. Written in **Rust** with **Ratatui**, shipped as a single binary.
+**lazypkg** is a lazygit-style terminal UI that shows every command-line tool you installed globally, across **cargo, npm, pnpm, pip, pipx, pacman, apt, dnf, Homebrew and gem**, in one place. Use it to find out which package manager installed a tool, read its cheatsheet, uninstall it, or export your whole toolchain to one TOML file and reinstall it on a new machine. Written in **Rust** with **Ratatui**, shipped as a single binary.
 
 [Report Bug](https://github.com/itxmjr/LazyPkg/issues/new?template=bug_report.yml) · [Request a Package Manager](https://github.com/itxmjr/LazyPkg/issues/new?template=new_manager.yml) · [Contribute](CONTRIBUTING.md)
 
 ## ✨ Features
 
-- **One list for every package manager**: see global cargo crates, npm/pnpm packages, pip user packages, pipx apps and user-installed dnf packages side by side.
+- **One list for every package manager**: see global cargo crates, npm/pnpm packages, pip/pipx apps, gems and the system packages you installed with pacman, apt, dnf or Homebrew, side by side.
+- **Add any package manager without coding**: describe it in a short TOML file in `~/.config/lazypkg/managers/`.
 - **Instant cheatsheets**: the selected tool's [tldr](https://tldr.sh) page loads next to the list, falling back to its `--help` output.
 - **Safe uninstall**: press `d`, and lazypkg shows the exact command it will run, and whether it needs root, before doing anything.
 - **Password prompts that work**: commands that need `sudo`/`doas`/`pkexec` pause the TUI so you can type your password, then bring you back.
@@ -38,8 +39,14 @@
 | `pipx` | apps installed with pipx | no |
 | `pip` | user-site packages (`pip list --user`) | no |
 | `dnf` | packages you installed explicitly | yes |
+| `pacman` | explicitly installed repo packages (`pacman -Qen`) | yes |
+| `apt` | packages marked manual (`apt-mark showmanual`) | yes |
+| `brew` | formulae you asked for (`brew leaves`) | no |
+| `gem` | installed gems, excluding Ruby's default gems | no |
 
-**Coming next:** pacman + AUR (paru/yay), apt, Homebrew, flatpak, `uv tool`, `go install`, and cross-distro name translation for import. Want one sooner? [Adding a manager takes about 30 minutes](CONTRIBUTING.md#add-a-package-manager-in-30-minutes).
+Missing one? Add it with a [15-line TOML file](CONTRIBUTING.md#a-describe-it-in-toml-no-rust-needed). Put it in `~/.config/lazypkg/managers/` to use it right away, no rebuild needed.
+
+**Coming next:** AUR (paru/yay), flatpak, `uv tool`, `go install`, and cross-distro name translation for import (`fd` on Arch ↔ `fd-find` on Debian).
 
 ## 📦 Installation
 
@@ -151,7 +158,8 @@ LazyPkg/
 │   ├── app.rs           # TUI state machine: modes, selection, key handling
 │   ├── exec.rs          # runs every external command (timeouts, sudo, captured output)
 │   ├── paths.rs         # XDG config/cache directories
-│   ├── managers/        # one file per package manager (cargo, dnf, npm, pnpm, pip, pipx)
+│   ├── managers/        # Rust managers (cargo, dnf, npm, pnpm, pip, pipx)
+│   │   └── defs/        # TOML managers (pacman, apt, brew, gem)
 │   ├── snapshot/        # export to / import from snapshot.toml
 │   ├── cheatsheet/      # tldr pages with --help fallback
 │   └── ui/              # Ratatui rendering

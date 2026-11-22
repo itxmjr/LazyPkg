@@ -42,6 +42,8 @@ src/
 ├── exec.rs          The ONLY place that runs external commands (timeouts, sudo, captured output)
 ├── paths.rs         XDG config/cache directories
 ├── managers/        One file per package manager — this is where most contributions go
+│   ├── defs/        Package managers described in TOML (easiest to add)
+│   └── declarative.rs  Loads and runs the TOML definitions
 │   └── mod.rs       The PackageManager trait
 ├── snapshot/        export (write snapshot.toml) and import (diff + install missing)
 ├── cheatsheet/      tldr pages with a `--help` fallback
@@ -57,84 +59,61 @@ Ground rules that keep lazypkg safe:
 
 ## Add a package manager in 30 minutes
 
-Let's say you want to add `gem`. Use `src/managers/pipx.rs` as a template; it's short and complete.
+There are two ways. Use **A** whenever you can.
 
-**1. Create `src/managers/gem.rs`:**
+### A. Describe it in TOML (no Rust needed)
 
-```rust
-use anyhow::Result;
-use super::{list_output, PackageManager, Tool};
-use crate::exec::Cmd;
+If the manager has a command that lists installed packages as plain text, you only need a small TOML file. Look at the built-in ones in [`src/managers/defs/`](src/managers/defs/): `pacman.toml`, `apt.toml`, `brew.toml`, `gem.toml`.
 
-pub struct GemManager;
+**1. Try it on your machine first**, without touching the code, by saving a file to `~/.config/lazypkg/managers/<name>.toml`:
 
-impl GemManager {
-    pub fn new() -> Self { GemManager }
+```toml
+name = "flatpak"          # lowercase letters, digits, '-'
+icon = "📦"
+binary = "flatpak"        # must be on PATH for the manager to appear
+system = false            # true for OS package managers (installed first on import)
 
-    /// Parse `gem list --local` output: "name (1.2.3, 1.1.0)"
-    fn parse(output: &str) -> Vec<Tool> {
-        let mut tools: Vec<Tool> = output
-            .lines()
-            .filter_map(|line| {
-                let (name, rest) = line.split_once(" (")?;
-                let version = rest.trim_end_matches(')').split(',').next().map(|v| v.trim().to_string());
-                Some(Tool { name: name.trim().to_string(), version, manager: "gem".into() })
-            })
-            .collect();
-        tools.sort_by(|a, b| a.name.cmp(&b.name));
-        tools
-    }
-}
+[list]
+cmd = ["flatpak", "list", "--app", "--columns=application,version"]
+format = "columns"        # lines | columns | parens  (see below)
+skip_lines_containing = []  # optional: drop header/warning lines
 
-impl PackageManager for GemManager {
-    fn name(&self) -> &str { "gem" }
-    fn icon(&self) -> &str { "💎" }
-    fn is_available(&self) -> bool { crate::exec::which("gem").is_some() }
+[install]
+cmd = ["flatpak", "install", "-y", "flathub", "{name}"]
+root = false              # true → lazypkg asks for sudo/doas/pkexec, visibly
 
-    fn list_installed(&self) -> Result<Vec<Tool>> {
-        let out = list_output(&Cmd::new("gem", &["list", "--local"]))?;
-        Ok(Self::parse(&out))
-    }
-
-    fn install_cmd(&self, name: &str) -> Cmd {
-        Cmd::new("gem", &["install", "--user-install", name])
-    }
-
-    fn uninstall_cmd(&self, tool: &Tool) -> Cmd {
-        Cmd::new("gem", &["uninstall", "-x", tool.name.as_str()])
-    }
-}
+[uninstall]
+cmd = ["flatpak", "uninstall", "{name}"]
 ```
 
-**2. Register it** in `src/managers/mod.rs`: add `pub mod gem;` and `Arc::new(gem::GemManager::new())` to `all_managers()`.
+Then run `lazypkg list --manager flatpak`. If your file has a mistake, lazypkg prints a warning naming the file and the problem. Unknown keys are errors, so typos don't go unnoticed.
 
-**3. Add tests using real output.** Run the list command on your machine and paste (part of) its output into a test:
+| `format` | Output looks like | Example |
+|---|---|---|
+| `lines` | one name per line | `apt-mark showmanual`, `brew leaves` |
+| `columns` | `name version` | `pacman -Qen` |
+| `parens` | `name (1.2.3, 1.1.0)` | `gem list` |
 
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
+`{name}` is replaced by the package name as **one argument**. Nothing goes through a shell, and names starting with `-` are rejected.
 
-    #[test]
-    fn parses_gem_list() {
-        let out = "bundler (2.5.6, 2.4.22)\nrake (13.1.0)\n";
-        let tools = GemManager::parse(out);
-        assert_eq!(tools.len(), 2);
-        assert_eq!(tools[0].name, "bundler");
-        assert_eq!(tools[0].version.as_deref(), Some("2.5.6"));
-    }
-}
-```
+**2. Ship it:** copy the file to `src/managers/defs/<name>.toml` and add it to the `BUILTIN` list at the top of `src/managers/declarative.rs`.
 
-Include awkward cases you've seen: empty output, warning lines, unusual version strings. Parsing bugs are the most common source of bug reports.
+**3. Add a test** with a few lines of real output. Put them in `tests/fixtures/<name>/` and add a parse test next to the others in `declarative.rs` (see `pacman_columns`). Include the awkward lines you've seen: headers, warnings, empty output. Use made-up package names, not a dump of your own machine.
 
-**4. Optional overrides:**
-- `is_system()` → `true` for OS package managers (pacman, apt, dnf, brew…), so they're installed first during import.
-- `normalize_name()` if the ecosystem treats names case-insensitively (see `pip::normalize_python_name`).
+That's it. `cargo test` checks that every built-in definition is valid.
 
-**5. Check it end to end:** `cargo run -- list --manager gem`, then open the TUI and try uninstalling something harmless.
+### B. Write it in Rust
 
-Wanted managers (each is a good first issue): **pacman, paru/yay (AUR), apt, Homebrew, flatpak, snap, uv tool, go install, gem, bun, yarn, cargo-binstall, mise, nix profile, zypper, xbps, apk**.
+Use Rust when the output is JSON or the package list comes from a file (npm, pnpm, pipx and cargo work this way). `src/managers/pipx.rs` is a short, complete template:
+
+1. Create `src/managers/<name>.rs` with a struct implementing `PackageManager` (`name`, `icon`, `is_available`, `list_installed`, `install_cmd`, `uninstall_cmd`).
+2. Keep parsing in a pure function (`fn parse_json(&str) -> Result<Vec<Tool>>`) and unit-test it with real output.
+3. Register it in `all_managers()` in `src/managers/mod.rs`.
+4. Optional overrides: `is_system()` for OS managers, and `normalize_name()` if names are case-insensitive (see `pip::normalize_python_name`).
+
+Then check it end to end: `cargo run -- list --manager <name>`, and try uninstalling something harmless in the TUI.
+
+Already built in: cargo, npm, pnpm, pip, pipx, dnf, pacman, apt, brew, gem.\nWanted (each is a good first issue): **paru/yay (AUR), flatpak, snap, uv tool, go install, bun, yarn, cargo-binstall, brew casks, mise, nix profile, zypper, xbps, apk, winget, scoop**.
 
 ## Pull requests
 
@@ -159,7 +138,7 @@ Security problems: please follow [SECURITY.md](SECURITY.md) instead of opening a
 
 The big picture, in order:
 1. **Stability:** safe uninstall/import, no TUI corruption, honest error messages.
-2. **Core refactor:** a test-friendly command runner, and package managers defined in TOML so new ones need no Rust.
+2. **Core refactor:** ✅ package managers defined in TOML; next, a test-friendly command runner.
 3. **More managers + cross-machine sync:** a versioned `lazypkg.toml` you keep in your dotfiles, with name translation between distros (`fd` on Arch ↔ `fd-find` on Debian), plus `lazypkg diff`, `apply --dry-run` and `doctor`.
 4. **Packaging:** prebuilt binaries, AUR, Homebrew, Copr.
 
