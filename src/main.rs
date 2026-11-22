@@ -1,14 +1,22 @@
 mod app;
-mod ui;
-mod managers;
 mod cheatsheet;
+mod exec;
+mod managers;
+mod paths;
 mod snapshot;
+mod ui;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::io::{IsTerminal, Write};
+use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "lazypkg", about = "Manage CLI tools across package managers", version)]
+#[command(
+    name = "lazypkg",
+    about = "Manage CLI tools across package managers",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -16,300 +24,286 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Export installed packages to snapshot file
-    Export,
-    /// Install missing packages from snapshot
+    /// Export installed packages to the snapshot file
+    Export {
+        /// Write to this file instead of ~/.config/lazypkg/snapshot.toml
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
+    },
+    /// Install packages from a snapshot that are missing on this machine
     Import {
         /// Path to snapshot file (default: ~/.config/lazypkg/snapshot.toml)
         file: Option<std::path::PathBuf>,
+        /// Show what would be installed, then exit without changing anything
+        #[arg(long)]
+        dry_run: bool,
+        /// Don't ask for confirmation (for scripts and non-interactive shells)
+        #[arg(short, long)]
+        yes: bool,
     },
     /// List all installed packages
     List {
-        /// Filter by package manager name
+        /// Only show packages from this package manager
         #[arg(long)]
         manager: Option<String>,
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let cli = Cli::parse();
-
-    match cli.command {
-        Some(Commands::Export) => {
-            let path = crate::snapshot::export::export_snapshot()?;
-            println!("Snapshot exported to: {}", path.display());
-            Ok(())
-        }
-        Some(Commands::Import { file }) => {
-            let path = file.unwrap_or_else(crate::snapshot::export::default_snapshot_path);
-            if !path.exists() {
-                eprintln!("Snapshot file not found: {}", path.display());
-                std::process::exit(1);
-            }
-            let snapshot = crate::snapshot::import::read_snapshot(&path)?;
-            let diffs = crate::snapshot::import::compute_diff(&snapshot)?;
-
-            if diffs.is_empty() {
-                println!("All packages already installed. Nothing to do.");
-                return Ok(());
-            }
-
-            // Show what will be installed
-            println!("Missing packages to install:");
-            for diff in &diffs {
-                for tool in &diff.missing_tools {
-                    println!("  [{}] {}", diff.manager, tool);
-                }
-            }
-
-            // Confirm
-            println!("\nInstall missing packages? [y/N] ");
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
-            if input.trim().to_lowercase() != "y" {
-                println!("Aborted.");
-                return Ok(());
-            }
-
-            let installed = crate::snapshot::import::install_missing(&diffs)?;
-            for pkg in &installed {
-                println!("  ✓ Installed {}", pkg);
-            }
-            println!("\nInstalled {} packages.", installed.len());
-            Ok(())
-        }
-        Some(Commands::List { manager }) => {
-            let managers = crate::managers::all_managers();
-            for mgr in managers.iter().filter(|m| m.is_available()) {
-                if let Some(ref filter) = manager {
-                    if mgr.name() != filter.as_str() {
-                        continue;
-                    }
-                }
-                match mgr.list_installed() {
-                    Ok(tools) => {
-                        for tool in tools {
-                            match tool.version {
-                                Some(v) => println!("{}: {}@{}", tool.manager, tool.name, v),
-                                None => println!("{}: {}", tool.manager, tool.name),
-                            }
-                        }
-                    }
-                    Err(e) => eprintln!("Error listing {} packages: {}", mgr.name(), e),
-                }
-            }
-            Ok(())
-        }
-        None => {
-            // TUI mode only: setup panic hook to restore terminal
-            let original_hook = std::panic::take_hook();
-            std::panic::set_hook(Box::new(move |info| {
-                let _ = crossterm::terminal::disable_raw_mode();
-                let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen);
-                original_hook(info);
-            }));
-
-            // Setup terminal
-            use app::App;
-            use crossterm::{
-                execute,
-                terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-            };
-            use ratatui::{
-                backend::CrosstermBackend,
-                Terminal,
-            };
-            use std::io::stdout;
-
-            enable_raw_mode()?;
-            let mut stdout = stdout();
-            execute!(stdout, EnterAlternateScreen)?;
-            let backend = CrosstermBackend::new(stdout);
-            let mut terminal = Terminal::new(backend)?;
-
-            // Initialize app
-            let mut app = App::new();
-            app.load_tools();
-
-            // Run the event loop
-            let result = run_app(&mut terminal, &mut app);
-
-            // Restore terminal
-            disable_raw_mode()?;
-            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-            terminal.show_cursor()?;
-
-            result
+fn main() -> ExitCode {
+    match run() {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("error: {:#}", e);
+            ExitCode::FAILURE
         }
     }
 }
 
-fn run_app<B: ratatui::backend::Backend>(
-    terminal: &mut ratatui::Terminal<B>,
-    app: &mut app::App,
-) -> Result<()> {
-    use app::Panel;
-    use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+fn run() -> Result<ExitCode> {
+    let cli = Cli::parse();
+    match cli.command {
+        Some(Commands::Export { output }) => cmd_export(output),
+        Some(Commands::Import { file, dry_run, yes }) => cmd_import(file, dry_run, yes),
+        Some(Commands::List { manager }) => cmd_list(manager),
+        None => run_tui().map(|()| ExitCode::SUCCESS),
+    }
+}
 
+fn cmd_export(output: Option<std::path::PathBuf>) -> Result<ExitCode> {
+    let report = match output {
+        Some(path) => snapshot::export::export_to(&path)?,
+        None => snapshot::export::export_snapshot()?,
+    };
+    for (manager, count) in &report.exported {
+        println!("  {:<6} {} packages", manager, count);
+    }
+    for warning in &report.warnings {
+        eprintln!("warning: {}", warning);
+    }
+    if let Some(bak) = &report.backup {
+        println!("Previous snapshot backed up to: {}", bak.display());
+    }
+    println!("Snapshot exported to: {}", report.path.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_import(file: Option<std::path::PathBuf>, dry_run: bool, yes: bool) -> Result<ExitCode> {
+    let path = match file {
+        Some(p) => p,
+        None => snapshot::export::default_snapshot_path()?,
+    };
+    if !path.exists() {
+        anyhow::bail!(
+            "snapshot file not found: {} (create one with `lazypkg export`)",
+            path.display()
+        );
+    }
+    let snap = snapshot::import::read_snapshot(&path)?;
+    let plan = snapshot::import::compute_plan(&snap);
+
+    for (manager, reason) in &plan.skipped {
+        eprintln!("skipped [{}]: {}", manager, reason);
+    }
+
+    if plan.diffs.is_empty() {
+        if plan.skipped.is_empty() {
+            println!("All packages already installed. Nothing to do.");
+            return Ok(ExitCode::SUCCESS);
+        }
+        println!("Nothing else to install.");
+        return Ok(ExitCode::from(2));
+    }
+
+    let total: usize = plan.diffs.iter().map(|d| d.missing_tools.len()).sum();
+    println!("Missing packages to install ({}):", total);
+    for diff in &plan.diffs {
+        for tool in &diff.missing_tools {
+            println!("  [{}] {}", diff.manager, tool);
+        }
+    }
+
+    if dry_run {
+        println!("\nDry run: nothing was installed.");
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    if !yes {
+        if !std::io::stdin().is_terminal() {
+            anyhow::bail!(
+                "stdin is not a terminal; re-run with --yes to install without confirmation"
+            );
+        }
+        print!("\nInstall {} missing packages? [y/N] ", total);
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
+            println!("Aborted.");
+            return Ok(ExitCode::SUCCESS);
+        }
+    }
+
+    let summary = snapshot::import::install_missing(&plan.diffs, |manager, tool, cmd| {
+        println!("\n==> [{}] {}\n$ {}", manager, tool, cmd.display());
+    });
+
+    println!();
+    for pkg in &summary.installed {
+        println!("  ✓ {}", pkg);
+    }
+    for (pkg, err) in &summary.failed {
+        println!("  ✗ {}: {}", pkg, err);
+    }
+    println!(
+        "\nInstalled {}, failed {}, skipped managers {}.",
+        summary.installed.len(),
+        summary.failed.len(),
+        plan.skipped.len()
+    );
+
+    // 0 = everything done, 2 = partial (some failed or skipped)
+    if summary.failed.is_empty() && plan.skipped.is_empty() {
+        Ok(ExitCode::SUCCESS)
+    } else {
+        Ok(ExitCode::from(2))
+    }
+}
+
+fn cmd_list(filter: Option<String>) -> Result<ExitCode> {
+    let all = managers::all_managers();
+    if let Some(name) = &filter {
+        if !all.iter().any(|m| m.name() == name) {
+            let known: Vec<&str> = all.iter().map(|m| m.name()).collect();
+            anyhow::bail!("unknown manager '{}' (known: {})", name, known.join(", "));
+        }
+    }
+
+    let mut had_error = false;
+    for mgr in all.iter().filter(|m| m.is_available()) {
+        if filter.as_deref().is_some_and(|f| f != mgr.name()) {
+            continue;
+        }
+        match mgr.list_installed() {
+            Ok(tools) => {
+                for tool in tools {
+                    match tool.version {
+                        Some(v) => println!("{}: {}@{}", tool.manager, tool.name, v),
+                        None => println!("{}: {}", tool.manager, tool.name),
+                    }
+                }
+            }
+            Err(e) => {
+                had_error = true;
+                eprintln!("error listing {} packages: {:#}", mgr.name(), e);
+            }
+        }
+    }
+    Ok(if had_error {
+        ExitCode::from(2)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+// ── TUI ──────────────────────────────────────────────────────────────────
+
+use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::execute;
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
+use ratatui::backend::CrosstermBackend;
+use ratatui::Terminal;
+
+type Term = Terminal<CrosstermBackend<std::io::Stdout>>;
+
+fn run_tui() -> Result<()> {
+    if !std::io::stdout().is_terminal() {
+        anyhow::bail!("the interactive UI needs a terminal; use `lazypkg list` for scripts");
+    }
+
+    // Restore the terminal if anything panics, so the shell isn't left broken.
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(
+            std::io::stdout(),
+            LeaveAlternateScreen,
+            crossterm::cursor::Show
+        );
+        original_hook(info);
+    }));
+
+    enable_raw_mode()?;
+    let mut stdout = std::io::stdout();
+    if let Err(e) = execute!(stdout, EnterAlternateScreen) {
+        let _ = disable_raw_mode();
+        return Err(e.into());
+    }
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
+
+    let mut app = app::App::new();
+    app.load_tools();
+    let result = run_app(&mut terminal, &mut app);
+
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let _ = terminal.show_cursor();
+    result
+}
+
+fn run_app(terminal: &mut Term, app: &mut app::App) -> Result<()> {
     loop {
         app.handle_events();
-        
         app.tick_spinner();
         app.maybe_clear_status();
         ui::draw(terminal, app)?;
 
-        // Decrease poll duration so we process async events faster
+        // A confirmed action that needs root: hand the terminal to the command
+        // so its password prompt and output are visible, then come back.
+        if let Some((tool, cmd)) = app.pending_interactive.take() {
+            let result = run_suspended(terminal, &cmd)?;
+            app.finish_uninstall(tool, result);
+            continue;
+        }
+
         if event::poll(std::time::Duration::from_millis(50))? {
+            // Only react to presses: some terminals also report repeats/releases.
             if let Event::Key(key) = event::read()? {
-                // Handle search input mode first
-                if app.search_active {
-                    match key.code {
-                        KeyCode::Esc => {
-                            app.search_query.clear();
-                            app.search_active = false;
-                            app.selected_tool = 0;
-                        }
-                        KeyCode::Backspace => {
-                            app.search_query.pop();
-                            app.selected_tool = 0;
-                        }
-                        KeyCode::Char(c) => {
-                            app.search_query.push(c);
-                            app.selected_tool = 0;
-                        }
-                        _ => {}
-                    }
-                    continue;
-                }
-
-                // Global keybinds (non-search mode)
-                match key.code {
-                    // Quit
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        return Ok(());
-                    }
-
-                    // Navigation down
-                    KeyCode::Char('j') | KeyCode::Down => match app.active_panel {
-                        Panel::Managers => app.next_manager(),
-                        Panel::Tools | Panel::Cheatsheet => app.next_tool(),
-                    },
-
-                    // Navigation up
-                    KeyCode::Char('k') | KeyCode::Up => match app.active_panel {
-                        Panel::Managers => app.prev_manager(),
-                        Panel::Tools | Panel::Cheatsheet => app.prev_tool(),
-                    },
-
-                    // Navigate left (previous panel)
-                    KeyCode::Char('h') | KeyCode::Left => match app.active_panel {
-                        Panel::Managers => {} // nothing
-                        Panel::Tools => app.active_panel = Panel::Managers,
-                        Panel::Cheatsheet => {
-                            app.active_panel = Panel::Tools;
-                            app.cheatsheet = None;
-                        }
-                    },
-
-                    // Navigate right / Tab (next panel)
-                    KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => {
-                        match app.active_panel {
-                            Panel::Managers => app.active_panel = Panel::Tools,
-                            Panel::Tools => {
-                                app.active_panel = Panel::Cheatsheet;
-                                app.load_cheatsheet();
-                            }
-                            Panel::Cheatsheet => {} // nothing
-                        }
-                    }
-
-                    // Enter: on Tools panel → switch to Cheatsheet
-                    KeyCode::Enter => {
-                        if app.active_panel == Panel::Tools {
-                            app.active_panel = Panel::Cheatsheet;
-                            app.load_cheatsheet();
-                        }
-                    }
-
-                    // Delete selected tool
-                    KeyCode::Char('d') => {
-                        if !app.show_confirm_delete
-                            && app.active_panel == Panel::Tools
-                            && app.selected_tool_item().is_some()
-                        {
-                            app.show_confirm_delete = true;
-                        }
-                    }
-
-                    // Refresh
-                    KeyCode::Char('r') => {
-                        if !app.show_confirm_delete {
-                            app.refresh();
-                        }
-                    }
-
-                    // Force Refresh Cheatsheet
-                    KeyCode::Char('R') => {
-                        if !app.show_confirm_delete && (app.active_panel == Panel::Tools || app.active_panel == Panel::Cheatsheet) {
-                            app.force_refresh_cheatsheet();
-                        }
-                    }
-
-                    // Activate search
-                    KeyCode::Char('/') => {
-                        app.search_active = true;
-                    }
-
-                    // Escape
-                    KeyCode::Esc => {
-                        if app.show_confirm_delete {
-                            app.show_confirm_delete = false;
-                        }
-                        if app.show_help {
-                            app.show_help = false;
-                        }
-                    }
-
-                    // Confirm delete
-                    KeyCode::Char('y') => {
-                        if app.show_confirm_delete {
-                            if let Err(e) = app.delete_selected_tool() {
-                                app.status_message = Some(format!("Error: {}", e));
-                            }
-                            app.show_confirm_delete = false;
-                        }
-                    }
-
-                    // Dismiss delete
-                    KeyCode::Char('n') => {
-                        if app.show_confirm_delete {
-                            app.show_confirm_delete = false;
-                        }
-                    }
-
-                    // Export snapshot
-                    KeyCode::Char('e') => {
-                        match app.export_snapshot() {
-                            Ok(_) => {}
-                            Err(e) => app.status_message = Some(format!("Export failed: {}", e)),
-                        }
-                    }
-
-                    // Import snapshot (CLI only in v1)
-                    KeyCode::Char('i') => {
-                        app.status_message = Some("Use 'lazypkg import' from command line to import".to_string());
-                    }
-
-                    // Toggle help
-                    KeyCode::Char('?') => {
-                        app.show_help = !app.show_help;
-                    }
-
-                    _ => {}
+                if key.kind == KeyEventKind::Press && app.handle_key(key) {
+                    return Ok(());
                 }
             }
         }
     }
+}
+
+/// Leave the TUI, run `cmd` attached to the real terminal, wait for Enter, and
+/// restore the TUI. Outer `Err` = terminal failure; inner = the command's result.
+fn run_suspended(terminal: &mut Term, cmd: &exec::Cmd) -> Result<Result<(), String>> {
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        crossterm::cursor::Show
+    )?;
+
+    println!(
+        "\nlazypkg needs administrator rights for this action:\n\n  $ {}\n",
+        cmd.display()
+    );
+    let result = exec::run_interactive(cmd).map_err(|e| format!("{:#}", e));
+    match &result {
+        Ok(()) => println!("\n✓ Done."),
+        Err(e) => println!("\n✗ {}", e),
+    }
+    print!("\nPress Enter to return to lazypkg…");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+
+    enable_raw_mode().context("failed to re-enter raw mode")?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+    terminal.clear()?;
+    Ok(result)
 }

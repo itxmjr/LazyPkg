@@ -1,6 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 
-use super::{PackageManager, Tool};
+use super::{list_output, PackageManager, Tool};
+use crate::exec::Cmd;
 
 pub struct DnfManager;
 
@@ -14,7 +15,10 @@ impl DnfManager {
         let mut tools = Vec::new();
         for line in output.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with("Updating and loading repositories:") || line.starts_with("Repositories loaded.") {
+            if line.is_empty()
+                || line.starts_with("Updating and loading repositories:")
+                || line.starts_with("Repositories loaded.")
+            {
                 continue;
             }
 
@@ -46,47 +50,33 @@ impl PackageManager for DnfManager {
     }
 
     fn is_available(&self) -> bool {
-        std::process::Command::new("dnf")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        crate::exec::which("dnf").is_some()
+    }
+
+    fn is_system(&self) -> bool {
+        true
     }
 
     fn list_installed(&self) -> Result<Vec<Tool>> {
-        let output = std::process::Command::new("dnf")
-            .args(["repoquery", "--userinstalled", "--qf", "%{name} %{version}\\n"])
-            .output()
-            .context("failed to run dnf")?;
-
-        if !output.status.success() && output.stdout.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let cmd = Cmd::new(
+            "dnf",
+            &[
+                "repoquery",
+                "--userinstalled",
+                "--qf",
+                "%{name} %{version}\\n",
+            ],
+        );
+        let stdout = list_output(&cmd)?;
         Ok(Self::parse_output(&stdout))
     }
 
-    fn uninstall(&self, tool: &Tool) -> Result<()> {
-        let status = std::process::Command::new("pkexec")
-            .args(["dnf", "remove", "-y", &tool.name])
-            .status()
-            .context("failed to run pkexec dnf remove")?;
-        if !status.success() {
-            anyhow::bail!("dnf remove {} failed with status {}", tool.name, status);
-        }
-        Ok(())
+    fn uninstall_cmd(&self, tool: &Tool) -> Cmd {
+        Cmd::new("dnf", &["remove", "-y", tool.name.as_str()]).with_root(true)
     }
 
-    fn install(&self, name: &str) -> Result<()> {
-        let status = std::process::Command::new("dnf")
-            .args(["install", "-y", name])
-            .status()
-            .context("failed to run dnf install")?;
-        if !status.success() {
-            anyhow::bail!("dnf install {} failed with status {}", name, status);
-        }
-        Ok(())
+    fn install_cmd(&self, name: &str) -> Cmd {
+        Cmd::new("dnf", &["install", "-y", name]).with_root(true)
     }
 }
 

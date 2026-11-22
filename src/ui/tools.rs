@@ -6,8 +6,8 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, Panel};
 use super::theme;
+use crate::app::{App, Mode, Panel};
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let border_color = if app.active_panel == Panel::Tools {
@@ -16,11 +16,17 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         theme::BORDER_INACTIVE
     };
 
-    let title = if app.search_active || !app.search_query.is_empty() {
-        format!("Tools [/{}]", app.search_query)
+    let searching = app.mode == Mode::Search;
+    let title = if searching || !app.search_query.is_empty() {
+        let cursor = if searching { "▏" } else { "" };
+        format!(
+            "Tools [/{}{}] {}",
+            app.search_query,
+            cursor,
+            app.current_tools().len()
+        )
     } else {
-        let tools = app.current_tools();
-        format!("Tools [{}]", tools.len())
+        format!("Tools [{}]", app.current_tools().len())
     };
 
     let block = Block::default()
@@ -29,10 +35,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .style(Style::default().bg(theme::BG))
         .border_style(Style::default().fg(border_color));
 
-    if app.loading {
-        let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let curr_frame = frames[app.spinner_tick % frames.len()];
-        let paragraph = Paragraph::new(format!("{} Loading...", curr_frame))
+    if app.tools_loading {
+        let paragraph = Paragraph::new(format!("{} Loading...", theme::spinner(app.spinner_tick)))
             .style(Style::default().fg(theme::SELECTED))
             .block(block);
         frame.render_widget(paragraph, area);
@@ -40,6 +44,20 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     let tools = app.current_tools();
+    if tools.is_empty() {
+        let msg = if !app.search_query.is_empty() {
+            "No tools match the search (Esc to clear)"
+        } else if app.managers.is_empty() {
+            "No supported package managers found"
+        } else {
+            "No packages installed with this manager"
+        };
+        let paragraph = Paragraph::new(msg)
+            .style(Style::default().fg(theme::DIM))
+            .block(block);
+        frame.render_widget(paragraph, area);
+        return;
+    }
 
     let items: Vec<ListItem> = tools
         .iter()

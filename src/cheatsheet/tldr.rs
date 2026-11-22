@@ -25,42 +25,39 @@ impl CheatsheetProvider for TldrProvider {
 fn tealdeer_cache_paths(tool_name: &str) -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
-    // Check XDG_DATA_HOME first (XDG spec)
-    let data_home = std::env::var("XDG_DATA_HOME").ok()
-        .map(PathBuf::from)
-        .or_else(|| std::env::var("HOME").ok()
-            .map(|h| PathBuf::from(h).join(".local").join("share")));
-
-    if let Some(data_home) = data_home {
+    // XDG_DATA_HOME (current tealdeer)
+    if let Some(data_home) = crate::paths::data_home() {
         let base = data_home.join("tealdeer").join("tldr-pages").join("pages");
         paths.push(base.join("common").join(format!("{}.md", tool_name)));
         paths.push(base.join("linux").join(format!("{}.md", tool_name)));
     }
 
     // XDG_CACHE_HOME (older tealdeer versions)
-    let cache_home = std::env::var("XDG_CACHE_HOME").ok()
-        .map(PathBuf::from)
-        .or_else(|| std::env::var("HOME").ok()
-            .map(|h| PathBuf::from(h).join(".cache")));
-
-    if let Some(cache_home) = cache_home {
-        paths.push(cache_home.join("tealdeer").join(format!("{}.md", tool_name)));
+    if let Some(cache_home) = crate::paths::cache_home() {
+        paths.push(
+            cache_home
+                .join("tealdeer")
+                .join(format!("{}.md", tool_name)),
+        );
     }
 
     paths
 }
 
-fn lazypkg_cache_path(tool_name: &str) -> PathBuf {
-    let cache_home = std::env::var("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".cache"));
-    cache_home.join("lazypkg").join("cheatsheets").join(format!("{}.md", tool_name))
+/// Where lazypkg caches a downloaded tldr page. `None` if the name isn't a
+/// safe page name or no cache directory can be determined.
+pub fn lazypkg_cache_path(tool_name: &str) -> Option<PathBuf> {
+    let name = super::page_name(tool_name)?;
+    Some(
+        crate::paths::cache_dir()?
+            .join("cheatsheets")
+            .join(format!("{}.md", name)),
+    )
 }
 
 fn check_local_cache(tool_name: &str) -> Option<String> {
     // Check our own cache first
-    let lazy_path = lazypkg_cache_path(tool_name);
-    if lazy_path.exists() {
+    if let Some(lazy_path) = lazypkg_cache_path(tool_name) {
         if let Ok(content) = std::fs::read_to_string(&lazy_path) {
             return Some(content);
         }
@@ -77,7 +74,9 @@ fn check_local_cache(tool_name: &str) -> Option<String> {
 }
 
 fn save_to_cache(tool_name: &str, content: &str) {
-    let path = lazypkg_cache_path(tool_name);
+    let Some(path) = lazypkg_cache_path(tool_name) else {
+        return;
+    };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

@@ -5,16 +5,18 @@ edition = "2021"
 description = "A lazygit-style terminal UI to manage all your CLI tools across package managers (cargo, dnf, pip, npm, etc.)"
 license = "MIT"
 repository = "https://github.com/itxmjr/LazyPkg"
-keywords = ["tui", "package-manager", "cli", "rust"]
+keywords = ["tui", "package-manager", "cli", "dotfiles", "ratatui"]
 categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
 
 [dependencies]
 ratatui = "0.28"
 crossterm = "0.28"
-tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
-reqwest = { version = "0.12", features = ["blocking"] }
+# rustls instead of OpenSSL: no system TLS library needed, so static/musl builds work
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+libc = "0.2"

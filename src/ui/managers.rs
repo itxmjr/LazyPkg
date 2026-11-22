@@ -6,8 +6,8 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, Panel};
 use super::theme;
+use crate::app::{App, Panel};
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let border_color = if app.active_panel == Panel::Managers {
