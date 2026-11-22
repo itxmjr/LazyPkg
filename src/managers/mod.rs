@@ -53,6 +53,26 @@ pub fn all_managers() -> Vec<Arc<dyn PackageManager>> {
     ]
 }
 
+/// Check that a package name (e.g. from a snapshot file) is safe to pass to a
+/// package manager. Names are always passed as a single argument, never via a
+/// shell, but a leading `-` would still be read as an *option*
+/// (`--index-url=https://evil`), so it is rejected.
+pub fn validate_package_name(name: &str) -> std::result::Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("empty name");
+    }
+    if name.starts_with('-') {
+        return Err("names may not start with '-'");
+    }
+    if name.len() > 214 {
+        return Err("name is too long");
+    }
+    if name.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err("names may not contain spaces or control characters");
+    }
+    Ok(())
+}
+
 /// Run a listing command and return stdout, tolerating a non-zero exit when the
 /// tool still printed output (npm/pnpm do this when a global package is broken).
 pub(crate) fn list_output(cmd: &Cmd) -> Result<String> {
@@ -67,4 +87,33 @@ pub(crate) fn list_output(cmd: &Cmd) -> Result<String> {
         anyhow::bail!("`{}` failed: {}", cmd.display(), err);
     }
     Ok(out.stdout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn package_name_validation() {
+        for ok in [
+            "ripgrep",
+            "@biomejs/biome",
+            "python3-requests",
+            "black[d]",
+            "g++",
+            "pkg==1.0",
+        ] {
+            assert!(validate_package_name(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "",
+            "-rf",
+            "--index-url=https://evil",
+            "two words",
+            "tab\tname",
+            "nl\nname",
+        ] {
+            assert!(validate_package_name(bad).is_err(), "{bad:?}");
+        }
+    }
 }
