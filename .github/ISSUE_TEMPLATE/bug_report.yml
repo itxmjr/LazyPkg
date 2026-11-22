@@ -1,0 +1,40 @@
+name: 🐛 Bug report
+description: Something is broken or shows the wrong packages
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! The more exact the output, the faster it gets fixed.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Command and full output
+      description: e.g. `lazypkg import --dry-run`. For wrong/missing packages, also paste the raw output of the manager's own list command (e.g. `npm list -g --json --depth=0`).
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: lazypkg version
+      placeholder: output of `lazypkg --version`
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS / distro
+      placeholder: e.g. Arch Linux, Ubuntu 24.04, Fedora 41, macOS 15
+    validations:
+      required: true
+  - type: dropdown
+    id: manager
+    attributes:
+      label: Package manager involved
+      multiple: true
+      options: [cargo, dnf, npm, pnpm, pip, pipx, other / not sure]
