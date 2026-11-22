@@ -1,0 +1,20 @@
+# Arch Linux and derivatives. Lists explicitly installed packages from the
+# official repositories (AUR/foreign packages are not included).
+name = "pacman"
+icon = "🏹"
+binary = "pacman"
+system = true
+
+[list]
+cmd = ["pacman", "-Qen"]
+format = "columns"
+
+[install]
+# --needed: skip packages that are already up to date
+cmd = ["pacman", "-S", "--needed", "--noconfirm", "{name}"]
+root = true
+
+[uninstall]
+# -s also removes dependencies nothing else needs; pacman asks before removing
+cmd = ["pacman", "-Rs", "{name}"]
+root = true

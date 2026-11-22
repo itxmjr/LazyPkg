@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::exec::Cmd;
 
 pub mod cargo;
+pub mod declarative;
 pub mod dnf;
 pub mod npm;
 pub mod pip;
@@ -42,15 +43,35 @@ pub trait PackageManager: Send + Sync {
     }
 }
 
+/// Every package manager lazypkg knows about: the Rust implementations, then
+/// the built-in TOML definitions, then the user's own definitions from
+/// `~/.config/lazypkg/managers/`. A later definition with the same name
+/// replaces an earlier one, so users can override any built-in manager.
 pub fn all_managers() -> Vec<Arc<dyn PackageManager>> {
-    vec![
+    let mut managers: Vec<Arc<dyn PackageManager>> = vec![
         Arc::new(cargo::CargoManager::new()),
         Arc::new(dnf::DnfManager::new()),
         Arc::new(pipx::PipxManager::new()),
         Arc::new(pip::PipManager::new()),
         Arc::new(npm::NpmManager::new()),
         Arc::new(pnpm::PnpmManager::new()),
-    ]
+    ];
+    let defs = declarative::builtin_defs()
+        .into_iter()
+        .chain(declarative::user_defs().0);
+    for def in defs {
+        let manager: Arc<dyn PackageManager> = Arc::new(declarative::DeclarativeManager::new(def));
+        match managers.iter().position(|m| m.name() == manager.name()) {
+            Some(i) => managers[i] = manager,
+            None => managers.push(manager),
+        }
+    }
+    managers
+}
+
+/// Problems loading the user's manager definitions, to show to the user.
+pub fn manager_warnings() -> Vec<String> {
+    declarative::user_defs().1
 }
 
 /// Check that a package name (e.g. from a snapshot file) is safe to pass to a
@@ -115,5 +136,16 @@ mod tests {
         ] {
             assert!(validate_package_name(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn manager_names_are_unique() {
+        let managers = all_managers();
+        let mut names: Vec<_> = managers.iter().map(|m| m.name().to_string()).collect();
+        let total = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), total);
+        assert!(names.contains(&"pacman".to_string()));
     }
 }
