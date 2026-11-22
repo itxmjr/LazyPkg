@@ -141,6 +141,9 @@ impl App {
         if self.selected_manager >= self.managers.len() {
             self.selected_manager = 0;
         }
+        if let Some(first) = crate::managers::manager_warnings().first() {
+            self.set_status(format!("Ignoring manager definition {}", first));
+        }
 
         // A new generation makes results from any still-running earlier load
         // (e.g. a refresh pressed while loading) be ignored.

@@ -61,6 +61,11 @@ fn main() -> ExitCode {
 
 fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
+    if cli.command.is_some() {
+        for warning in managers::manager_warnings() {
+            eprintln!("warning: ignoring manager definition {}", warning);
+        }
+    }
     match cli.command {
         Some(Commands::Export { output }) => cmd_export(output),
         Some(Commands::Import { file, dry_run, yes }) => cmd_import(file, dry_run, yes),

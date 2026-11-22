@@ -1,0 +1,5 @@
+base 3-2
+bat 0.24.0-2
+linux 6.12.1.arch1-1
+neovim 0.10.2-1
+ripgrep 14.1.1-1

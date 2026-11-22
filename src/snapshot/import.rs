@@ -70,7 +70,20 @@ pub fn compute_plan(snapshot: &Snapshot) -> ImportPlan {
             }
         };
 
-        let missing = missing_tools(manager.as_ref(), &manager_snap.tools, &installed);
+        // Names come from a file that may have been shared or edited: refuse
+        // anything that a package manager could read as an option.
+        let mut wanted = Vec::new();
+        for name in &manager_snap.tools {
+            match crate::managers::validate_package_name(name.trim()) {
+                Ok(()) => wanted.push(name.clone()),
+                Err(_) if name.trim().is_empty() => {}
+                Err(reason) => skipped.push((
+                    manager_name.clone(),
+                    format!("'{}' is not a valid package name ({})", name, reason),
+                )),
+            }
+        }
+        let missing = missing_tools(manager.as_ref(), &wanted, &installed);
         if !missing.is_empty() {
             diffs.push((
                 manager.is_system(),
@@ -138,6 +151,13 @@ pub fn install_missing(
             continue;
         };
         for tool in &diff.missing_tools {
+            if let Err(reason) = crate::managers::validate_package_name(tool) {
+                summary.failed.push((
+                    format!("{}/{}", diff.manager, tool),
+                    format!("invalid package name ({})", reason),
+                ));
+                continue;
+            }
             let cmd = manager.install_cmd(tool);
             before_each(&diff.manager, tool, &cmd);
             let id = format!("{}/{}", diff.manager, tool);
@@ -208,5 +228,35 @@ mod tests {
         assert!(plan.diffs.is_empty());
         assert_eq!(plan.skipped.len(), 1);
         assert!(plan.skipped[0].1.contains("not supported"));
+    }
+
+    #[test]
+    fn option_like_names_are_skipped_not_installed() {
+        let mut snap = Snapshot::default();
+        snap.packages.insert(
+            "cargo".into(),
+            crate::snapshot::ManagerSnapshot {
+                tools: s(&["--index-url=https://evil", "-rf"]),
+            },
+        );
+        let plan = compute_plan(&snap);
+        assert!(plan.diffs.is_empty());
+        // only reported when cargo exists here; either way nothing is installed
+        assert!(plan
+            .skipped
+            .iter()
+            .all(|(_, reason)| reason.contains("not a valid") || reason.contains("not installed")));
+    }
+
+    #[test]
+    fn install_missing_refuses_option_like_names() {
+        let diffs = vec![ImportDiff {
+            manager: "cargo".into(),
+            missing_tools: s(&["--locked"]),
+        }];
+        let mut ran = false;
+        let summary = install_missing(&diffs, |_, _, _| ran = true);
+        assert!(!ran, "no command may be built for an invalid name");
+        assert_eq!(summary.failed.len(), 1);
     }
 }

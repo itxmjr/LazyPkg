@@ -1,0 +1,18 @@
+# Debian, Ubuntu and derivatives. Lists packages marked as manually installed.
+name = "apt"
+icon = "🌀"
+binary = "apt-mark"
+system = true
+
+[list]
+cmd = ["apt-mark", "showmanual"]
+format = "lines"
+
+[install]
+cmd = ["apt-get", "install", "-y", "{name}"]
+root = true
+
+[uninstall]
+# no -y: apt shows what else would be removed and asks
+cmd = ["apt-get", "remove", "{name}"]
+root = true

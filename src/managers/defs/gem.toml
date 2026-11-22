@@ -1,0 +1,16 @@
+# RubyGems. Default gems bundled with Ruby are skipped (they can't be removed).
+name = "gem"
+icon = "💎"
+binary = "gem"
+
+[list]
+cmd = ["gem", "list", "--local"]
+format = "parens"
+skip_lines_containing = ["(default:", "*** LOCAL GEMS ***"]
+
+[install]
+cmd = ["gem", "install", "--user-install", "{name}"]
+
+[uninstall]
+# -a: all versions, -x: also remove the executables
+cmd = ["gem", "uninstall", "-a", "-x", "{name}"]

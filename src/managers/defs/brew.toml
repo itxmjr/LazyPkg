@@ -1,0 +1,16 @@
+# Homebrew (macOS and Linux). Lists formulae that aren't dependencies of
+# other installed formulae, i.e. the ones you asked for.
+name = "brew"
+icon = "🍺"
+binary = "brew"
+system = true
+
+[list]
+cmd = ["brew", "leaves"]
+format = "lines"
+
+[install]
+cmd = ["brew", "install", "{name}"]
+
+[uninstall]
+cmd = ["brew", "uninstall", "{name}"]
