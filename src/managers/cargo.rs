@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 use super::{PackageManager, Tool};
+use crate::exec::Cmd;
 
 pub struct CargoManager;
 
@@ -11,13 +12,18 @@ impl CargoManager {
     }
 
     fn crates_toml_path() -> Option<PathBuf> {
-        // First try CARGO_HOME
+        // First try CARGO_HOME (ignore it if set but empty)
         if let Ok(cargo_home) = std::env::var("CARGO_HOME") {
-            return Some(std::path::PathBuf::from(cargo_home).join(".crates.toml"));
+            if !cargo_home.is_empty() {
+                return Some(PathBuf::from(cargo_home).join(".crates.toml"));
+            }
         }
         // Fall back to HOME
-        std::env::var("HOME").ok()
-            .map(|h| std::path::PathBuf::from(h).join(".cargo").join(".crates.toml"))
+        std::env::var("HOME").ok().map(|h| {
+            std::path::PathBuf::from(h)
+                .join(".cargo")
+                .join(".crates.toml")
+        })
     }
 
     /// Parse a crates.toml key of the form `"name version (registry...)"` into (name, version).
@@ -39,21 +45,20 @@ impl PackageManager for CargoManager {
     }
 
     fn is_available(&self) -> bool {
-        std::process::Command::new("cargo")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        crate::exec::which("cargo").is_some()
     }
 
     fn list_installed(&self) -> Result<Vec<Tool>> {
-        let path = Self::crates_toml_path()
-            .context("Could not determine HOME directory")?;
+        let path = Self::crates_toml_path().context("Could not determine HOME directory")?;
 
         let contents = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
-            Err(e) => return Err(anyhow::Error::from(e).context(format!("Failed to read {}", path.display()))),
+            Err(e) => {
+                return Err(
+                    anyhow::Error::from(e).context(format!("Failed to read {}", path.display()))
+                )
+            }
         };
 
         let doc: toml::Value = contents
@@ -80,26 +85,14 @@ impl PackageManager for CargoManager {
         Ok(tools)
     }
 
-    fn uninstall(&self, tool: &Tool) -> Result<()> {
-        let status = std::process::Command::new("cargo")
-            .args(["uninstall", &tool.name])
-            .status()
-            .context("Failed to run cargo uninstall")?;
-        if !status.success() {
-            anyhow::bail!("cargo uninstall {} failed with status {}", tool.name, status);
-        }
-        Ok(())
+    fn uninstall_cmd(&self, tool: &Tool) -> Cmd {
+        Cmd::new("cargo", &["uninstall", tool.name.as_str()])
     }
 
-    fn install(&self, name: &str) -> Result<()> {
-        let status = std::process::Command::new("cargo")
-            .args(["install", name])
-            .status()
-            .context("Failed to run cargo install")?;
-        if !status.success() {
-            anyhow::bail!("cargo install {} failed with status {}", name, status);
-        }
-        Ok(())
+    fn install_cmd(&self, name: &str) -> Cmd {
+        // --locked: build with the dependency versions the author published,
+        // which is far more likely to succeed on a fresh machine.
+        Cmd::new("cargo", &["install", "--locked", name])
     }
 }
 

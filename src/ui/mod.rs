@@ -1,143 +1,160 @@
+pub mod cheatsheet;
+pub mod confirm;
 pub mod layout;
 pub mod managers;
-pub mod tools;
-pub mod cheatsheet;
 pub mod search;
-pub mod confirm;
 pub mod theme;
+pub mod tools;
 
 use ratatui::{
-    layout::Rect,
-    style::Style,
-    widgets::{Block, Paragraph},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
-fn render_status_bar(frame: &mut Frame, app: &crate::app::App, area: Rect) {
-    if let Some(ref msg) = app.status_message {
-        let p = Paragraph::new(ratatui::text::Line::from(ratatui::text::Span::styled(
-            msg.as_str(),
+use crate::app::{App, Mode};
+
+/// Priority: a fresh status message, then a running operation, then key hints.
+fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let bar = Block::default().style(Style::default().bg(theme::BG));
+
+    if let Some(msg) = app.status_message() {
+        let p = Paragraph::new(Line::from(Span::styled(
+            format!(" {}", msg),
             Style::default().fg(theme::YELLOW).bg(theme::BG),
-        ))).block(Block::default().style(Style::default().bg(theme::BG)));
+        )))
+        .block(bar);
         frame.render_widget(p, area);
-    } else {
-        let layout = ratatui::layout::Layout::default()
-            .direction(ratatui::layout::Direction::Horizontal)
-            .constraints([
-                ratatui::layout::Constraint::Min(0),
-                ratatui::layout::Constraint::Length(35),
-            ])
-            .split(area);
-
-        let left_part = ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled(
-                " nav: j/k | switch: h/l | del: d | search: / | export: e | quit: q | ?: keybindings",
-                Style::default().fg(theme::DIM).bg(theme::BG),
-            ),
-        ]);
-
-        let right_part = ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled(
-                "Donate ",
-                Style::default().fg(ratatui::style::Color::Magenta).bg(theme::BG),
-            ),
-            ratatui::text::Span::styled(
-                "Ask_Question ",
-                Style::default().fg(theme::YELLOW).bg(theme::BG),
-            ),
-            ratatui::text::Span::styled(
-                env!("CARGO_PKG_VERSION"),
-                Style::default().fg(theme::DIM).bg(theme::BG),
-            ),
-        ]);
-
-        let left_p = Paragraph::new(left_part)
-            .block(Block::default().style(Style::default().bg(theme::BG)));
-        
-        let right_p = Paragraph::new(right_part)
-            .alignment(ratatui::layout::Alignment::Right)
-            .block(Block::default().style(Style::default().bg(theme::BG)));
-
-        frame.render_widget(left_p, layout[0]);
-        frame.render_widget(right_p, layout[1]);
+        return;
     }
+
+    if let Some(op) = &app.busy {
+        let p = Paragraph::new(Line::from(Span::styled(
+            format!(" {} {}", theme::spinner(app.spinner_tick), op),
+            Style::default().fg(theme::SELECTED).bg(theme::BG),
+        )))
+        .block(bar);
+        frame.render_widget(p, area);
+        return;
+    }
+
+    let hints = match app.mode {
+        Mode::Search => " type to filter | enter: keep filter | esc: clear | ↑/↓: move",
+        _ => " nav: j/k | panels: h/l | del: d | search: / | export: e | refresh: r | help: ? | quit: q",
+    };
+    let version = format!("lazypkg {} ", env!("CARGO_PKG_VERSION"));
+
+    let layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(version.chars().count() as u16),
+        ])
+        .split(area);
+
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            hints,
+            Style::default().fg(theme::DIM).bg(theme::BG),
+        ))
+        .block(bar.clone()),
+        layout[0],
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            version,
+            Style::default().fg(theme::DIM).bg(theme::BG),
+        ))
+        .alignment(Alignment::Right)
+        .block(bar),
+        layout[1],
+    );
+}
+
+fn render_help(frame: &mut Frame, area: Rect) {
+    let rows = [
+        ("j / k / ↑ / ↓", "Move in the list"),
+        ("h / l / ← / →", "Switch panel"),
+        ("Tab", "Next panel"),
+        ("Enter", "Open cheatsheet"),
+        ("d", "Uninstall selected tool (asks first)"),
+        ("r", "Refresh installed tools"),
+        ("R", "Re-download the cheatsheet"),
+        ("/", "Search (Enter keeps the filter)"),
+        ("Esc", "Clear the search filter"),
+        ("e", "Export snapshot"),
+        ("?", "Toggle this help"),
+        ("q / Ctrl+C", "Quit"),
+    ];
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            " Keyboard Shortcuts ",
+            Style::default()
+                .fg(theme::SELECTED)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    lines.extend(
+        rows.iter()
+            .map(|(k, v)| Line::from(format!("  {:<15} {}", k, v))),
+    );
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " Import a snapshot with `lazypkg import` (outside the TUI). ",
+        Style::default().fg(theme::DIM),
+    )));
+    lines.push(Line::from(Span::styled(
+        " Press ? or Esc to close ",
+        Style::default().fg(theme::DIM),
+    )));
+
+    let height = lines.len() as u16 + 2;
+    let overlay = centered_rect_fixed(64, height, area);
+    frame.render_widget(Clear, overlay);
+    let block = Block::default()
+        .title(" Help ")
+        .borders(Borders::ALL)
+        .style(Style::default().bg(theme::BG))
+        .border_style(Style::default().fg(theme::BORDER_ACTIVE));
+    frame.render_widget(Paragraph::new(lines).block(block), overlay);
 }
 
 pub fn draw<B: ratatui::backend::Backend>(
     terminal: &mut ratatui::Terminal<B>,
-    app: &crate::app::App,
+    app: &App,
 ) -> anyhow::Result<()> {
     terminal.draw(|frame| {
         let area = frame.area();
-        // Set background
-        frame.render_widget(
-            ratatui::widgets::Block::default()
-                .style(ratatui::style::Style::default().bg(theme::BG)),
-            area,
-        );
+        frame.render_widget(Block::default().style(Style::default().bg(theme::BG)), area);
+
         let panels = layout::create_layout(area);
         managers::render(frame, app, panels.managers);
         tools::render(frame, app, panels.tools);
         cheatsheet::render(frame, app, panels.cheatsheet);
-        // status bar
         render_status_bar(frame, app, panels.status_bar);
+
         // popups (drawn last, on top)
-        if app.show_confirm_delete {
-            confirm::render(frame, app);
-        } else if app.show_help {
-            let overlay_area = centered_rect(50, 60, area);
-            frame.render_widget(ratatui::widgets::Clear, overlay_area);
-
-            let help_text = vec![
-                ratatui::text::Line::from(ratatui::text::Span::styled(" Keyboard Shortcuts ", Style::default().fg(theme::SELECTED).add_modifier(ratatui::style::Modifier::BOLD))),
-                ratatui::text::Line::from(""),
-                ratatui::text::Line::from("  j / k / ↑ / ↓  : Navigate list"),
-                ratatui::text::Line::from("  h / l / ← / →  : Navigate panels"),
-                ratatui::text::Line::from("  Tab            : Next panel"),
-                ratatui::text::Line::from("  Enter          : Open cheatsheet"),
-                ratatui::text::Line::from("  d              : Delete selected tool"),
-                ratatui::text::Line::from("  r              : Refresh installed tools"),
-                ratatui::text::Line::from("  /              : Search tools"),
-                ratatui::text::Line::from("  e              : Export snapshot"),
-                ratatui::text::Line::from("  i              : Import snapshot (CLI only)"),
-                ratatui::text::Line::from("  ?              : Toggle this help menu"),
-                ratatui::text::Line::from("  q / Ctrl+C     : Quit"),
-                ratatui::text::Line::from(""),
-                ratatui::text::Line::from(ratatui::text::Span::styled(" Press ? or Esc to close ", Style::default().fg(theme::DIM))),
-            ];
-
-            let block = Block::default()
-                .title(" Help ")
-                .borders(ratatui::widgets::Borders::ALL)
-                .style(Style::default().bg(theme::BG))
-                .border_style(Style::default().fg(theme::BORDER_ACTIVE));
-
-            let paragraph = Paragraph::new(help_text)
-                .block(block)
-                .alignment(ratatui::layout::Alignment::Left);
-
-            frame.render_widget(paragraph, overlay_area);
+        match app.mode {
+            Mode::ConfirmDelete { .. } => confirm::render(frame, app),
+            Mode::Help => render_help(frame, area),
+            Mode::Normal | Mode::Search => {}
         }
     })?;
     Ok(())
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = ratatui::layout::Layout::default()
-        .direction(ratatui::layout::Direction::Vertical)
-        .constraints([
-            ratatui::layout::Constraint::Percentage((100 - percent_y) / 2),
-            ratatui::layout::Constraint::Percentage(percent_y),
-            ratatui::layout::Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    ratatui::layout::Layout::default()
-        .direction(ratatui::layout::Direction::Horizontal)
-        .constraints([
-            ratatui::layout::Constraint::Percentage((100 - percent_x) / 2),
-            ratatui::layout::Constraint::Percentage(percent_x),
-            ratatui::layout::Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
+/// A popup `width` columns wide and `height` rows tall, centred and clamped to `r`.
+fn centered_rect_fixed(width: u16, height: u16, r: Rect) -> Rect {
+    let width = width.min(r.width);
+    let height = height.min(r.height);
+    Rect {
+        x: r.x + (r.width - width) / 2,
+        y: r.y + (r.height - height) / 2,
+        width,
+        height,
+    }
 }

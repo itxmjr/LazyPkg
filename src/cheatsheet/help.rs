@@ -1,6 +1,8 @@
 use super::CheatsheetProvider;
 use anyhow::Result;
 
+const HELP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 pub struct HelpProvider;
 
 impl HelpProvider {
@@ -11,19 +13,26 @@ impl HelpProvider {
 
 impl CheatsheetProvider for HelpProvider {
     fn fetch(&self, tool_name: &str) -> Result<Option<String>> {
-        let output = match std::process::Command::new(tool_name)
-            .arg("--help")
-            .output()
-        {
+        // Only run something that really is an executable on PATH (a package
+        // name is not necessarily a command), never a path.
+        if tool_name.contains('/') || crate::exec::which(tool_name).is_none() {
+            return Ok(None);
+        }
+        // stdin is closed and the process is killed after HELP_TIMEOUT, so a
+        // program that ignores --help (starts a GUI, a server, a REPL…) can't hang us.
+        let output = match crate::exec::run_captured(
+            &crate::exec::Cmd::new(tool_name, &["--help"]),
+            Some(HELP_TIMEOUT),
+        ) {
             Ok(o) => o,
             Err(_) => return Ok(None),
         };
 
-        // Combine stdout and stderr (--help output varies by tool)
-        let raw = if output.stdout.is_empty() {
-            String::from_utf8_lossy(&output.stderr).into_owned()
+        // --help output goes to stdout or stderr depending on the tool
+        let raw = if output.stdout.trim().is_empty() {
+            output.stderr
         } else {
-            String::from_utf8_lossy(&output.stdout).into_owned()
+            output.stdout
         };
 
         if raw.trim().is_empty() {
@@ -43,7 +52,9 @@ fn strip_ansi(s: &str) -> String {
     while i < bytes.len() {
         if bytes[i] == 0x1b {
             i += 1;
-            if i >= bytes.len() { break; }
+            if i >= bytes.len() {
+                break;
+            }
             match bytes[i] {
                 b'[' => {
                     // CSI sequence - skip until final byte (0x40-0x7E)

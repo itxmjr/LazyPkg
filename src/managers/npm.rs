@@ -1,14 +1,43 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::time::Duration;
 
-use super::{PackageManager, Tool};
+use super::{list_output, PackageManager, Tool};
+use crate::exec::{self, Cmd};
 
 pub struct NpmManager;
 
 impl NpmManager {
     pub fn new() -> Self {
         NpmManager
+    }
+
+    /// Global installs need root only when the global node_modules directory is
+    /// not writable by the current user (e.g. a distro-packaged node with prefix
+    /// /usr). With nvm, fnm, volta or a user prefix, no elevation is needed.
+    fn global_needs_root() -> bool {
+        let Ok(out) = exec::run_captured(
+            &Cmd::new("npm", &["root", "-g"]),
+            Some(Duration::from_secs(15)),
+        ) else {
+            return false;
+        };
+        let root = PathBuf::from(out.stdout.trim());
+        if !out.status.success() || !root.is_absolute() {
+            return false;
+        }
+        // If node_modules doesn't exist yet, npm will create it inside its parent.
+        let probe = if root.exists() {
+            root
+        } else {
+            match root.parent() {
+                Some(p) => p.to_path_buf(),
+                None => return false,
+            }
+        };
+        !exec::is_writable(&probe)
     }
 
     fn parse_json(json: &str) -> Result<Vec<Tool>> {
@@ -50,54 +79,26 @@ impl PackageManager for NpmManager {
     }
 
     fn is_available(&self) -> bool {
-        std::process::Command::new("npm")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        crate::exec::which("npm").is_some()
     }
 
     fn list_installed(&self) -> Result<Vec<Tool>> {
-        let output = std::process::Command::new("npm")
-            .args(["list", "-g", "--json", "--depth=0"])
-            .output()
-            .context("failed to run npm")?;
-
         // npm list -g --json can exit non-zero when some packages have issues
-        // but still produce valid JSON on stdout — try to parse regardless
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        // but still produce valid JSON on stdout — list_output tolerates that.
+        let stdout = list_output(&Cmd::new("npm", &["list", "-g", "--json", "--depth=0"]))?;
         if stdout.trim().is_empty() {
             return Ok(vec![]);
         }
         Self::parse_json(&stdout)
     }
 
-    fn uninstall(&self, tool: &Tool) -> Result<()> {
-        let status = std::process::Command::new("npm")
-            .args(["uninstall", "-g", &tool.name])
-            .status()
-            .context("failed to run npm uninstall")?;
-        if !status.success() {
-            let status_pkexec = std::process::Command::new("pkexec")
-                .args(["npm", "uninstall", "-g", &tool.name])
-                .status()
-                .context("failed to run pkexec npm uninstall")?;
-            if !status_pkexec.success() {
-                anyhow::bail!("npm uninstall {} failed", tool.name);
-            }
-        }
-        Ok(())
+    fn uninstall_cmd(&self, tool: &Tool) -> Cmd {
+        Cmd::new("npm", &["uninstall", "-g", tool.name.as_str()])
+            .with_root(Self::global_needs_root())
     }
 
-    fn install(&self, name: &str) -> Result<()> {
-        let status = std::process::Command::new("npm")
-            .args(["install", "-g", name])
-            .status()
-            .context("failed to run npm install")?;
-        if !status.success() {
-            anyhow::bail!("npm install {} failed with status {}", name, status);
-        }
-        Ok(())
+    fn install_cmd(&self, name: &str) -> Cmd {
+        Cmd::new("npm", &["install", "-g", name]).with_root(Self::global_needs_root())
     }
 }
 

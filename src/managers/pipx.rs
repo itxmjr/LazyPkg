@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{PackageManager, Tool};
+use super::{list_output, PackageManager, Tool};
+use crate::exec::Cmd;
 
 pub struct PipxManager;
 
@@ -65,50 +66,27 @@ impl PackageManager for PipxManager {
     }
 
     fn is_available(&self) -> bool {
-        std::process::Command::new("pipx")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        crate::exec::which("pipx").is_some()
     }
 
     fn list_installed(&self) -> Result<Vec<Tool>> {
-        let output = std::process::Command::new("pipx")
-            .args(["list", "--json"])
-            .output()
-            .context("failed to run pipx")?;
-
-        if !output.status.success() && output.stdout.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stdout = list_output(&Cmd::new("pipx", &["list", "--json"]))?;
         if stdout.trim().is_empty() {
             return Ok(vec![]);
         }
         Self::parse_json(&stdout)
     }
 
-    fn uninstall(&self, tool: &Tool) -> Result<()> {
-        let status = std::process::Command::new("pipx")
-            .args(["uninstall", &tool.name])
-            .status()
-            .context("failed to run pipx uninstall")?;
-        if !status.success() {
-            anyhow::bail!("pipx uninstall {} failed with status {}", tool.name, status);
-        }
-        Ok(())
+    fn uninstall_cmd(&self, tool: &Tool) -> Cmd {
+        Cmd::new("pipx", &["uninstall", tool.name.as_str()])
     }
 
-    fn install(&self, name: &str) -> Result<()> {
-        let status = std::process::Command::new("pipx")
-            .args(["install", name])
-            .status()
-            .context("failed to run pipx install")?;
-        if !status.success() {
-            anyhow::bail!("pipx install {} failed with status {}", name, status);
-        }
-        Ok(())
+    fn install_cmd(&self, name: &str) -> Cmd {
+        Cmd::new("pipx", &["install", name])
+    }
+
+    fn normalize_name(&self, name: &str) -> String {
+        super::pip::normalize_python_name(name)
     }
 }
 

@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{PackageManager, Tool};
+use super::{list_output, PackageManager, Tool};
+use crate::exec::Cmd;
 
 pub struct PnpmManager;
 
@@ -56,52 +57,24 @@ impl PackageManager for PnpmManager {
     }
 
     fn is_available(&self) -> bool {
-        std::process::Command::new("pnpm")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        crate::exec::which("pnpm").is_some()
     }
 
     fn list_installed(&self) -> Result<Vec<Tool>> {
-        let output = std::process::Command::new("pnpm")
-            .args(["list", "-g", "--json"])
-            .output()
-            .context("failed to run pnpm")?;
-
-        if !output.status.success() && output.stdout.is_empty() {
-            return Ok(vec![]);
-        }
-        // pnpm may output valid JSON even on non-zero exit, try to parse anyway
-        // (same as npm - pnpm can exit non-zero with valid JSON output)
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        // pnpm may print valid JSON even on a non-zero exit; list_output tolerates that.
+        let stdout = list_output(&Cmd::new("pnpm", &["list", "-g", "--json"]))?;
         if stdout.trim().is_empty() {
             return Ok(vec![]);
         }
         Self::parse_json(&stdout)
     }
 
-    fn uninstall(&self, tool: &Tool) -> Result<()> {
-        let status = std::process::Command::new("pnpm")
-            .args(["remove", "-g", &tool.name])
-            .status()
-            .context("failed to run pnpm remove")?;
-        if !status.success() {
-            anyhow::bail!("pnpm remove {} failed with status {}", tool.name, status);
-        }
-        Ok(())
+    fn uninstall_cmd(&self, tool: &Tool) -> Cmd {
+        Cmd::new("pnpm", &["remove", "-g", tool.name.as_str()])
     }
 
-    fn install(&self, name: &str) -> Result<()> {
-        let status = std::process::Command::new("pnpm")
-            .args(["add", "-g", name])
-            .status()
-            .context("failed to run pnpm add")?;
-        if !status.success() {
-            anyhow::bail!("pnpm add {} failed with status {}", name, status);
-        }
-        Ok(())
+    fn install_cmd(&self, name: &str) -> Cmd {
+        Cmd::new("pnpm", &["add", "-g", name])
     }
 }
 

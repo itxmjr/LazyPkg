@@ -1,14 +1,15 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 
-use crate::app::App;
 use super::theme;
+use crate::app::{App, Mode};
 
 fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
+    let height = height.min(area.height);
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -30,33 +31,39 @@ fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
     horizontal[1]
 }
 
+/// Delete confirmation. Shows the exact command that will run, and warns when
+/// it needs administrator rights, before anything happens.
 pub fn render(frame: &mut Frame, app: &App) {
-    if !app.show_confirm_delete {
+    let Mode::ConfirmDelete { tool, cmd } = &app.mode else {
         return;
-    }
-
-    let area = frame.area();
-    let popup_area = centered_rect(40, 5, area);
-
-    frame.render_widget(Clear, popup_area);
-
-    let tool_info = if let Some(tool) = app.selected_tool_item() {
-        format!(
-            "Delete {} ({})?\n\n[y] Yes  [n] No",
-            tool.name, tool.manager
-        )
-    } else {
-        "Delete this tool?\n\n[y] Yes  [n] No".to_string()
     };
 
+    let mut text = format!(
+        "Uninstall {} ({})?\n\nThis will run:\n  $ {}\n",
+        tool.name,
+        tool.manager,
+        cmd.display()
+    );
+    if cmd.will_elevate() {
+        text.push_str(
+            "\n⚠ Needs administrator rights: lazypkg will pause\n  so you can enter your password.\n",
+        );
+    }
+    text.push_str("\n[y] Yes   [n] No");
+
+    let height = text.lines().count() as u16 + 2;
+    let popup_area = centered_rect(60, height, frame.area());
+    frame.render_widget(Clear, popup_area);
+
     let block = Block::default()
-        .title("Confirm Delete")
+        .title(" Confirm uninstall ")
         .borders(Borders::ALL)
         .style(Style::default().bg(theme::BG))
         .border_style(Style::default().fg(theme::RED));
 
-    let paragraph = Paragraph::new(tool_info)
+    let paragraph = Paragraph::new(text)
         .style(Style::default().fg(theme::TEXT).bg(theme::BG))
+        .wrap(Wrap { trim: false })
         .block(block);
 
     frame.render_widget(paragraph, popup_area);
