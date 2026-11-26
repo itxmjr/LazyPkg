@@ -1,10 +1,12 @@
 [package]
 name = "lazypkg"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "A lazygit-style terminal UI to manage all your CLI tools across package managers (cargo, dnf, pip, npm, etc.)"
+description = "Lazygit-style TUI to see, uninstall and sync every globally installed CLI tool across cargo, npm, pnpm, pip, pipx, pacman, apt, dnf, brew and gem"
 license = "MIT"
 repository = "https://github.com/itxmjr/LazyPkg"
+# Keep the published crate small: CI config and demo media aren't needed to build or test.
+exclude = [".github/", "assets/"]
 keywords = ["tui", "package-manager", "cli", "dotfiles", "ratatui"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
