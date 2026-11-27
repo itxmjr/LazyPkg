@@ -14,6 +14,7 @@
 
 - **One list for every package manager**: see global cargo crates, npm/pnpm packages, pip/pipx apps, gems and the system packages you installed with pacman, apt, dnf or Homebrew, side by side.
 - **Add any package manager without coding**: describe it in a short TOML file in `~/.config/lazypkg/managers/`.
+- **Find where any tool came from**: press `/` in the managers panel to search every package manager at once.
 - **Instant cheatsheets**: the selected tool's [tldr](https://tldr.sh) page loads next to the list, falling back to its `--help` output.
 - **Safe uninstall**: press `d`, and lazypkg shows the exact command it will run, and whether it needs root, before doing anything.
 - **Password prompts that work**: commands that need `sudo`/`doas`/`pkexec` pause the TUI so you can type your password, then bring you back.
@@ -88,7 +89,9 @@ lazypkg
 | `h` `l` / `←` `→` / `Tab` | Switch panel |
 | `Enter` | Open the cheatsheet |
 | `d` | Uninstall the selected tool (asks first) |
-| `/` | Search (`Enter` keeps the filter, `Esc` clears it) |
+| `/` | Search the selected manager's tools (`Enter` keeps the filter, `Esc` clears it) |
+| `/` in the Managers panel | Search **every** manager at once; each result shows which manager installed it |
+| Mouse | Click a panel or item to select it, scroll to move (hold `Shift` to select text) |
 | `r` / `R` | Refresh tools / re-download the cheatsheet |
 | `e` | Export snapshot |
 | `?` | Help |

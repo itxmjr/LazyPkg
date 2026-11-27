@@ -3,10 +3,11 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::exec::{self, Cmd};
 use crate::managers::{all_managers, PackageManager, Tool};
+use crate::ui::layout::{contains, list_index_at, Panels};
 
 /// How long a status message stays visible.
 const STATUS_TTL: Duration = Duration::from_secs(4);
@@ -46,6 +47,15 @@ pub enum Mode {
     Help,
 }
 
+/// What `/` searches: the selected manager's tools (from the Tools panel), or
+/// every manager at once (from the Managers panel), so you can find where a
+/// tool came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchScope {
+    Manager,
+    All,
+}
+
 pub struct App {
     pub managers: Vec<Arc<dyn PackageManager>>,
     pub tools_by_manager: HashMap<String, Vec<Tool>>,
@@ -54,6 +64,7 @@ pub struct App {
     pub active_panel: Panel,
     pub mode: Mode,
     pub search_query: String,
+    pub search_scope: SearchScope,
 
     pub cheatsheet: Option<String>,
     pub cheatsheet_loading: bool,
@@ -88,6 +99,7 @@ impl App {
             active_panel: Panel::Managers,
             mode: Mode::Normal,
             search_query: String::new(),
+            search_scope: SearchScope::Manager,
             cheatsheet: None,
             cheatsheet_loading: false,
             cheatsheet_tool: None,
@@ -228,21 +240,44 @@ impl App {
         self.managers.get(self.selected_manager).map(|m| m.as_ref())
     }
 
+    /// The tools shown in the Tools panel: the selected manager's, or every
+    /// manager's (in panel order) during a global search, filtered by the query.
     pub fn current_tools(&self) -> Vec<&Tool> {
-        let Some(manager) = self.current_manager() else {
-            return Vec::new();
-        };
-        let Some(tools) = self.tools_by_manager.get(manager.name()) else {
-            return Vec::new();
-        };
         let query = self.search_query.to_lowercase();
-        if query.is_empty() {
-            tools.iter().collect()
-        } else {
-            tools
+        let matches = |t: &&Tool| query.is_empty() || t.name.to_lowercase().contains(&query);
+        match self.search_scope {
+            SearchScope::All => self
+                .managers
                 .iter()
-                .filter(|t| t.name.to_lowercase().contains(&query))
-                .collect()
+                .filter_map(|m| self.tools_by_manager.get(m.name()))
+                .flat_map(|tools| tools.iter())
+                .filter(matches)
+                .collect(),
+            SearchScope::Manager => {
+                let Some(manager) = self.current_manager() else {
+                    return Vec::new();
+                };
+                let Some(tools) = self.tools_by_manager.get(manager.name()) else {
+                    return Vec::new();
+                };
+                tools.iter().filter(matches).collect()
+            }
+        }
+    }
+
+    pub fn is_global_search(&self) -> bool {
+        self.search_scope == SearchScope::All
+    }
+
+    /// Go back to showing one manager's tools, dropping a global search.
+    fn end_global_search(&mut self) {
+        if self.search_scope == SearchScope::All {
+            self.search_scope = SearchScope::Manager;
+            self.search_query.clear();
+            self.selected_tool = 0;
+            if self.mode == Mode::Search {
+                self.mode = Mode::Normal;
+            }
         }
     }
 
@@ -287,6 +322,12 @@ impl App {
         if count == 0 {
             return;
         }
+        if self.is_global_search() {
+            // Leaving a global search just shows the selected manager again.
+            self.end_global_search();
+            self.clear_cheatsheet();
+            return;
+        }
         self.selected_manager = (self.selected_manager + 1) % count;
         self.selected_tool = 0;
         self.clear_cheatsheet();
@@ -295,6 +336,12 @@ impl App {
     pub fn prev_manager(&mut self) {
         let count = self.managers.len();
         if count == 0 {
+            return;
+        }
+        if self.is_global_search() {
+            // Leaving a global search just shows the selected manager again.
+            self.end_global_search();
+            self.clear_cheatsheet();
             return;
         }
         self.selected_manager = (self.selected_manager + count - 1) % count;
@@ -408,6 +455,7 @@ impl App {
     }
 
     pub fn refresh(&mut self) {
+        self.search_scope = SearchScope::Manager;
         self.search_query.clear();
         self.selected_tool = 0;
         self.load_tools();
@@ -474,7 +522,7 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
-                self.set_search_query(String::new());
+                self.clear_search();
             }
             // Keep the filter and go back to navigating it
             KeyCode::Enter => self.mode = Mode::Normal,
@@ -494,6 +542,18 @@ impl App {
         }
     }
 
+    /// Clear the query and return to the selected manager's tools. A global
+    /// search started in the Managers panel, so cancelling it goes back there.
+    fn clear_search(&mut self) {
+        if self.is_global_search() {
+            self.end_global_search();
+            self.active_panel = Panel::Managers;
+            self.on_tool_selection_changed();
+        } else {
+            self.set_search_query(String::new());
+        }
+    }
+
     fn set_search_query(&mut self, query: String) {
         if query == self.search_query {
             return;
@@ -501,6 +561,96 @@ impl App {
         self.search_query = query;
         self.selected_tool = 0;
         self.on_tool_selection_changed();
+    }
+
+    /// Handle one mouse event; `panels` is where each panel is on screen.
+    /// Clicks focus a panel and select the item under the pointer; the wheel
+    /// moves the selection. While the delete confirmation is open the mouse is
+    /// ignored, so a stray click can never confirm an uninstall.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent, panels: &Panels) {
+        let clicked = mouse.kind == MouseEventKind::Down(MouseButton::Left);
+        match self.mode {
+            Mode::Normal => {}
+            // Clicking ends typing but keeps the filter, like Enter.
+            Mode::Search if clicked => self.mode = Mode::Normal,
+            Mode::Help if clicked => {
+                self.mode = Mode::Normal;
+                return;
+            }
+            _ => return,
+        }
+        let (col, row) = (mouse.column, mouse.row);
+        let over_managers = contains(panels.managers, col, row);
+        let over_tools = contains(panels.tools, col, row);
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if over_managers {
+                    self.active_panel = Panel::Managers;
+                    let selected = if self.is_global_search() {
+                        0 // no manager is highlighted, so the list isn't scrolled
+                    } else {
+                        self.selected_manager
+                    };
+                    if let Some(i) =
+                        list_index_at(panels.managers, row, selected, self.managers.len())
+                    {
+                        self.select_manager(i);
+                    }
+                } else if over_tools {
+                    self.active_panel = Panel::Tools;
+                    if self.tools_loading {
+                        return;
+                    }
+                    let len = self.current_tools().len();
+                    if let Some(i) = list_index_at(panels.tools, row, self.selected_tool, len) {
+                        if i != self.selected_tool {
+                            self.selected_tool = i;
+                            self.clear_cheatsheet();
+                        }
+                    }
+                    self.load_cheatsheet();
+                } else if contains(panels.cheatsheet, col, row) {
+                    self.active_panel = Panel::Cheatsheet;
+                    self.load_cheatsheet();
+                }
+            }
+            MouseEventKind::ScrollDown if over_managers => self.next_manager(),
+            MouseEventKind::ScrollUp if over_managers => self.prev_manager(),
+            MouseEventKind::ScrollDown if over_tools => self.next_tool(),
+            MouseEventKind::ScrollUp if over_tools => self.prev_tool(),
+            _ => {}
+        }
+    }
+
+    fn select_manager(&mut self, index: usize) {
+        if self.is_global_search() {
+            self.end_global_search();
+            self.clear_cheatsheet();
+        }
+        if index != self.selected_manager {
+            self.selected_manager = index;
+            self.selected_tool = 0;
+            self.clear_cheatsheet();
+        }
+    }
+
+    /// `/` from the Managers panel searches every manager; from the Tools
+    /// panel it refines the current list (one manager's, or global results).
+    fn start_search(&mut self) {
+        let scope = if self.active_panel == Panel::Managers {
+            SearchScope::All
+        } else {
+            self.search_scope
+        };
+        if scope != self.search_scope {
+            self.search_scope = scope;
+            self.search_query.clear();
+            self.selected_tool = 0;
+            self.clear_cheatsheet();
+        }
+        self.active_panel = Panel::Tools;
+        self.mode = Mode::Search;
     }
 
     fn handle_normal_key(&mut self, key: KeyEvent) -> bool {
@@ -557,17 +707,8 @@ impl App {
                     self.force_refresh_cheatsheet();
                 }
             }
-            KeyCode::Char('/') => {
-                if self.active_panel == Panel::Managers {
-                    self.active_panel = Panel::Tools;
-                }
-                self.mode = Mode::Search;
-            }
-            KeyCode::Esc => {
-                if !self.search_query.is_empty() {
-                    self.set_search_query(String::new());
-                }
-            }
+            KeyCode::Char('/') => self.start_search(),
+            KeyCode::Esc => self.clear_search(),
             KeyCode::Char('e') => self.start_export(),
             KeyCode::Char('i') => {
                 self.set_status("Import runs outside the TUI: quit and run `lazypkg import`")
@@ -749,5 +890,155 @@ mod tests {
         assert_eq!(app.selected_tool, 1);
         assert!(app.busy.is_none());
         assert_eq!(app.current_tools().len(), 2);
+    }
+    /// `app_with_tools()` plus a second manager (pipx) with its own tools.
+    fn app_with_two_managers() -> App {
+        let mut app = app_with_tools();
+        app.managers
+            .push(Arc::new(crate::managers::pipx::PipxManager::new()));
+        app.tools_by_manager.insert(
+            "pipx".into(),
+            vec![Tool {
+                name: "httpie".into(),
+                version: None,
+                manager: "pipx".into(),
+            }],
+        );
+        app
+    }
+
+    fn type_str(app: &mut App, s: &str) {
+        for c in s.chars() {
+            app.handle_key(key(c));
+        }
+    }
+
+    fn esc() -> KeyEvent {
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn slash_in_managers_searches_every_manager() {
+        let mut app = app_with_two_managers();
+        app.active_panel = Panel::Managers;
+        app.handle_key(key('/'));
+        assert!(app.is_global_search());
+        assert_eq!(app.active_panel, Panel::Tools);
+        // Empty query: everything, in manager order.
+        assert_eq!(app.current_tools().len(), 4);
+        type_str(&mut app, "http");
+        let found = app.selected_tool_item().expect("a result");
+        assert_eq!(found.name, "httpie");
+        assert_eq!(found.manager, "pipx");
+    }
+
+    #[test]
+    fn slash_in_tools_searches_only_the_current_manager() {
+        let mut app = app_with_two_managers();
+        app.handle_key(key('/'));
+        assert!(!app.is_global_search());
+        type_str(&mut app, "http");
+        assert!(app.current_tools().is_empty());
+    }
+
+    #[test]
+    fn esc_ends_a_global_search() {
+        let mut app = app_with_two_managers();
+        app.active_panel = Panel::Managers;
+        app.handle_key(key('/'));
+        type_str(&mut app, "http");
+        app.handle_key(esc());
+        assert!(!app.is_global_search());
+        assert_eq!(app.active_panel, Panel::Managers);
+        assert_eq!(app.search_query, "");
+        assert_eq!(app.current_tools().len(), 3); // cargo's tools again
+    }
+
+    #[test]
+    fn changing_manager_ends_a_kept_global_search() {
+        let mut app = app_with_two_managers();
+        app.active_panel = Panel::Managers;
+        app.handle_key(key('/'));
+        type_str(&mut app, "http");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.is_global_search(), "Enter keeps the results");
+        app.handle_key(key('h'));
+        app.handle_key(key('j'));
+        assert!(!app.is_global_search());
+        assert_eq!(app.selected_manager, 0, "first move only leaves the search");
+    }
+
+    // Screen layout used by the mouse tests: 100x30 terminal.
+    fn panels() -> Panels {
+        crate::ui::layout::create_layout(ratatui::layout::Rect::new(0, 0, 100, 30))
+    }
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn click(column: u16, row: u16) -> MouseEvent {
+        mouse(MouseEventKind::Down(MouseButton::Left), column, row)
+    }
+
+    #[test]
+    fn clicking_a_tool_row_selects_it() {
+        let mut app = app_with_tools();
+        app.active_panel = Panel::Managers;
+        let p = panels();
+        // Row 0 is the border; the third tool is on row 3.
+        app.handle_mouse(click(p.tools.x + 2, p.tools.y + 3), &p);
+        assert_eq!(app.active_panel, Panel::Tools);
+        assert_eq!(app.selected_tool_item().unwrap().name, "ripgrep");
+    }
+
+    #[test]
+    fn clicking_a_manager_row_selects_it() {
+        let mut app = app_with_two_managers();
+        let p = panels();
+        app.handle_mouse(click(p.managers.x + 2, p.managers.y + 2), &p);
+        assert_eq!(app.active_panel, Panel::Managers);
+        assert_eq!(app.selected_manager, 1);
+        assert_eq!(app.current_tools()[0].name, "httpie");
+    }
+
+    #[test]
+    fn wheel_moves_the_selection_under_the_pointer() {
+        let mut app = app_with_tools();
+        let p = panels();
+        app.handle_mouse(
+            mouse(MouseEventKind::ScrollDown, p.tools.x + 2, p.tools.y + 2),
+            &p,
+        );
+        assert_eq!(app.selected_tool, 1);
+        app.handle_mouse(
+            mouse(MouseEventKind::ScrollUp, p.tools.x + 2, p.tools.y + 2),
+            &p,
+        );
+        assert_eq!(app.selected_tool, 0);
+    }
+
+    #[test]
+    fn mouse_is_ignored_while_confirming_a_delete() {
+        let mut app = app_with_tools();
+        app.handle_key(key('d'));
+        let p = panels();
+        app.handle_mouse(click(p.tools.x + 2, p.tools.y + 3), &p);
+        assert!(matches!(app.mode, Mode::ConfirmDelete { .. }));
+        assert_eq!(app.selected_tool, 0);
+    }
+
+    #[test]
+    fn click_closes_help() {
+        let mut app = app_with_tools();
+        app.handle_key(key('?'));
+        let p = panels();
+        app.handle_mouse(click(50, 10), &p);
+        assert_eq!(app.mode, Mode::Normal);
     }
 }
