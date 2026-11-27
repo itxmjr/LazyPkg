@@ -3,10 +3,11 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::exec::{self, Cmd};
 use crate::managers::{all_managers, PackageManager, Tool};
+use crate::ui::layout::{contains, list_index_at, Panels};
 
 /// How long a status message stays visible.
 const STATUS_TTL: Duration = Duration::from_secs(4);
@@ -562,6 +563,78 @@ impl App {
         self.on_tool_selection_changed();
     }
 
+    /// Handle one mouse event; `panels` is where each panel is on screen.
+    /// Clicks focus a panel and select the item under the pointer; the wheel
+    /// moves the selection. While the delete confirmation is open the mouse is
+    /// ignored, so a stray click can never confirm an uninstall.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent, panels: &Panels) {
+        let clicked = mouse.kind == MouseEventKind::Down(MouseButton::Left);
+        match self.mode {
+            Mode::Normal => {}
+            // Clicking ends typing but keeps the filter, like Enter.
+            Mode::Search if clicked => self.mode = Mode::Normal,
+            Mode::Help if clicked => {
+                self.mode = Mode::Normal;
+                return;
+            }
+            _ => return,
+        }
+        let (col, row) = (mouse.column, mouse.row);
+        let over_managers = contains(panels.managers, col, row);
+        let over_tools = contains(panels.tools, col, row);
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if over_managers {
+                    self.active_panel = Panel::Managers;
+                    let selected = if self.is_global_search() {
+                        0 // no manager is highlighted, so the list isn't scrolled
+                    } else {
+                        self.selected_manager
+                    };
+                    if let Some(i) =
+                        list_index_at(panels.managers, row, selected, self.managers.len())
+                    {
+                        self.select_manager(i);
+                    }
+                } else if over_tools {
+                    self.active_panel = Panel::Tools;
+                    if self.tools_loading {
+                        return;
+                    }
+                    let len = self.current_tools().len();
+                    if let Some(i) = list_index_at(panels.tools, row, self.selected_tool, len) {
+                        if i != self.selected_tool {
+                            self.selected_tool = i;
+                            self.clear_cheatsheet();
+                        }
+                    }
+                    self.load_cheatsheet();
+                } else if contains(panels.cheatsheet, col, row) {
+                    self.active_panel = Panel::Cheatsheet;
+                    self.load_cheatsheet();
+                }
+            }
+            MouseEventKind::ScrollDown if over_managers => self.next_manager(),
+            MouseEventKind::ScrollUp if over_managers => self.prev_manager(),
+            MouseEventKind::ScrollDown if over_tools => self.next_tool(),
+            MouseEventKind::ScrollUp if over_tools => self.prev_tool(),
+            _ => {}
+        }
+    }
+
+    fn select_manager(&mut self, index: usize) {
+        if self.is_global_search() {
+            self.end_global_search();
+            self.clear_cheatsheet();
+        }
+        if index != self.selected_manager {
+            self.selected_manager = index;
+            self.selected_tool = 0;
+            self.clear_cheatsheet();
+        }
+    }
+
     /// `/` from the Managers panel searches every manager; from the Tools
     /// panel it refines the current list (one manager's, or global results).
     fn start_search(&mut self) {
@@ -893,5 +966,79 @@ mod tests {
         app.handle_key(key('j'));
         assert!(!app.is_global_search());
         assert_eq!(app.selected_manager, 0, "first move only leaves the search");
+    }
+
+    // Screen layout used by the mouse tests: 100x30 terminal.
+    fn panels() -> Panels {
+        crate::ui::layout::create_layout(ratatui::layout::Rect::new(0, 0, 100, 30))
+    }
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn click(column: u16, row: u16) -> MouseEvent {
+        mouse(MouseEventKind::Down(MouseButton::Left), column, row)
+    }
+
+    #[test]
+    fn clicking_a_tool_row_selects_it() {
+        let mut app = app_with_tools();
+        app.active_panel = Panel::Managers;
+        let p = panels();
+        // Row 0 is the border; the third tool is on row 3.
+        app.handle_mouse(click(p.tools.x + 2, p.tools.y + 3), &p);
+        assert_eq!(app.active_panel, Panel::Tools);
+        assert_eq!(app.selected_tool_item().unwrap().name, "ripgrep");
+    }
+
+    #[test]
+    fn clicking_a_manager_row_selects_it() {
+        let mut app = app_with_two_managers();
+        let p = panels();
+        app.handle_mouse(click(p.managers.x + 2, p.managers.y + 2), &p);
+        assert_eq!(app.active_panel, Panel::Managers);
+        assert_eq!(app.selected_manager, 1);
+        assert_eq!(app.current_tools()[0].name, "httpie");
+    }
+
+    #[test]
+    fn wheel_moves_the_selection_under_the_pointer() {
+        let mut app = app_with_tools();
+        let p = panels();
+        app.handle_mouse(
+            mouse(MouseEventKind::ScrollDown, p.tools.x + 2, p.tools.y + 2),
+            &p,
+        );
+        assert_eq!(app.selected_tool, 1);
+        app.handle_mouse(
+            mouse(MouseEventKind::ScrollUp, p.tools.x + 2, p.tools.y + 2),
+            &p,
+        );
+        assert_eq!(app.selected_tool, 0);
+    }
+
+    #[test]
+    fn mouse_is_ignored_while_confirming_a_delete() {
+        let mut app = app_with_tools();
+        app.handle_key(key('d'));
+        let p = panels();
+        app.handle_mouse(click(p.tools.x + 2, p.tools.y + 3), &p);
+        assert!(matches!(app.mode, Mode::ConfirmDelete { .. }));
+        assert_eq!(app.selected_tool, 0);
+    }
+
+    #[test]
+    fn click_closes_help() {
+        let mut app = app_with_tools();
+        app.handle_key(key('?'));
+        let p = panels();
+        app.handle_mouse(click(50, 10), &p);
+        assert_eq!(app.mode, Mode::Normal);
     }
 }

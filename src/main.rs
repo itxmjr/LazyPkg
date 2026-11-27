@@ -212,7 +212,7 @@ fn cmd_list(filter: Option<String>) -> Result<ExitCode> {
 
 // ── TUI ──────────────────────────────────────────────────────────────────
 
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -233,6 +233,7 @@ fn run_tui() -> Result<()> {
         let _ = disable_raw_mode();
         let _ = execute!(
             std::io::stdout(),
+            DisableMouseCapture,
             LeaveAlternateScreen,
             crossterm::cursor::Show
         );
@@ -241,7 +242,7 @@ fn run_tui() -> Result<()> {
 
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
-    if let Err(e) = execute!(stdout, EnterAlternateScreen) {
+    if let Err(e) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
         let _ = disable_raw_mode();
         return Err(e.into());
     }
@@ -252,7 +253,11 @@ fn run_tui() -> Result<()> {
     let result = run_app(&mut terminal, &mut app);
 
     let _ = disable_raw_mode();
-    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let _ = execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    );
     let _ = terminal.show_cursor();
     result
 }
@@ -273,11 +278,21 @@ fn run_app(terminal: &mut Term, app: &mut app::App) -> Result<()> {
         }
 
         if event::poll(std::time::Duration::from_millis(50))? {
-            // Only react to presses: some terminals also report repeats/releases.
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press && app.handle_key(key) {
-                    return Ok(());
+            match event::read()? {
+                // Only react to presses: some terminals also report repeats/releases.
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    if app.handle_key(key) {
+                        return Ok(());
+                    }
                 }
+                Event::Mouse(mouse) => {
+                    // Same layout function `ui::draw` uses, so hits match the screen.
+                    let size = terminal.size()?;
+                    let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+                    let panels = ui::layout::create_layout(area);
+                    app.handle_mouse(mouse, &panels);
+                }
+                _ => {}
             }
         }
     }
@@ -287,8 +302,10 @@ fn run_app(terminal: &mut Term, app: &mut app::App) -> Result<()> {
 /// restore the TUI. Outer `Err` = terminal failure; inner = the command's result.
 fn run_suspended(terminal: &mut Term, cmd: &exec::Cmd) -> Result<Result<(), String>> {
     disable_raw_mode()?;
+    // Mouse capture off, or clicks would type escape codes into the password prompt.
     execute!(
         terminal.backend_mut(),
+        DisableMouseCapture,
         LeaveAlternateScreen,
         crossterm::cursor::Show
     )?;
@@ -308,7 +325,11 @@ fn run_suspended(terminal: &mut Term, cmd: &exec::Cmd) -> Result<Result<(), Stri
     let _ = std::io::stdin().read_line(&mut line);
 
     enable_raw_mode().context("failed to re-enter raw mode")?;
-    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        EnterAlternateScreen,
+        EnableMouseCapture
+    )?;
     terminal.clear()?;
     Ok(result)
 }

@@ -85,6 +85,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         ("/", "Search this manager's tools"),
         ("/ in Managers", "Search every manager at once"),
         ("Esc", "Clear the search"),
+        ("Mouse", "Click to select, wheel to move"),
         ("e", "Export snapshot"),
         ("?", "Toggle this help"),
         ("q / Ctrl+C", "Quit"),
@@ -104,6 +105,10 @@ fn render_help(frame: &mut Frame, area: Rect) {
             .map(|(k, v)| Line::from(format!("  {:<15} {}", k, v))),
     );
     lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " To select text with the mouse, hold Shift while dragging. ",
+        Style::default().fg(theme::DIM),
+    )));
     lines.push(Line::from(Span::styled(
         " Import a snapshot with `lazypkg import` (outside the TUI). ",
         Style::default().fg(theme::DIM),
