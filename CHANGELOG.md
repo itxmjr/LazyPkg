@@ -2,6 +2,12 @@
 
 All notable changes to lazypkg are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Press `/` in the managers panel to search every package manager at once; each result shows which manager installed it.
+- Mouse support: click a panel or item to select it, and scroll to move through lists.
+
 ## [0.2.0] - 2026-11-26
 
 ### Added
