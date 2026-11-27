@@ -10,6 +10,10 @@
 
 [Report Bug](https://github.com/itxmjr/LazyPkg/issues/new?template=bug_report.yml) · [Request a Package Manager](https://github.com/itxmjr/LazyPkg/issues/new?template=new_manager.yml) · [Contribute](CONTRIBUTING.md)
 
+<p align="center">
+  <img src="./assets/demo.gif" alt="lazypkg demo: searching every package manager at once, opening a tool's cheatsheet, and previewing what a new machine would install" width="720" />
+</p>
+
 ## ✨ Features
 
 - **One list for every package manager**: see global cargo crates, npm/pnpm packages, pip/pipx apps, gems and the system packages you installed with pacman, apt, dnf or Homebrew, side by side.
