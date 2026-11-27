@@ -17,7 +17,6 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let block = Block::default()
-        .title("Managers")
         .borders(Borders::ALL)
         .style(Style::default().bg(theme::BG))
         .border_style(Style::default().fg(border_color));
@@ -28,7 +27,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .enumerate()
         .map(|(i, m)| {
             let label = format!("{} {}", m.icon(), m.name());
-            if i == app.selected_manager {
+            // During a global search no single manager is selected.
+            if i == app.selected_manager && !app.is_global_search() {
                 ListItem::new(Line::from(Span::styled(
                     label,
                     Style::default()
@@ -44,10 +44,15 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let list = List::new(items).block(block);
+    let title = if app.is_global_search() {
+        "Managers (all)"
+    } else {
+        "Managers"
+    };
+    let list = List::new(items).block(block.title(title));
 
     let mut state = ListState::default();
-    if !app.managers.is_empty() {
+    if !app.managers.is_empty() && !app.is_global_search() {
         state.select(Some(app.selected_manager));
     }
 

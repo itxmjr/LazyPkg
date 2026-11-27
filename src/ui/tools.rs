@@ -17,16 +17,19 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let searching = app.mode == Mode::Search;
+    let global = app.is_global_search();
+    let label = if global { "All tools" } else { "Tools" };
     let title = if searching || !app.search_query.is_empty() {
         let cursor = if searching { "▏" } else { "" };
         format!(
-            "Tools [/{}{}] {}",
+            "{} [/{}{}] {}",
+            label,
             app.search_query,
             cursor,
             app.current_tools().len()
         )
     } else {
-        format!("Tools [{}]", app.current_tools().len())
+        format!("{} [{}]", label, app.current_tools().len())
     };
 
     let block = Block::default()
@@ -49,6 +52,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             "No tools match the search (Esc to clear)"
         } else if app.managers.is_empty() {
             "No supported package managers found"
+        } else if global {
+            "No packages found in any manager"
         } else {
             "No packages installed with this manager"
         };
@@ -74,17 +79,21 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 Span::styled(tool.name.clone(), Style::default().fg(theme::TEXT))
             };
 
-            let line = if let Some(ref ver) = tool.version {
-                Line::from(vec![
-                    name_span,
-                    Span::raw("  "),
-                    Span::styled(ver.clone(), Style::default().fg(theme::DIM)),
-                ])
-            } else {
-                Line::from(vec![name_span])
-            };
+            let mut spans = vec![name_span];
+            if let Some(ref ver) = tool.version {
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled(ver.clone(), Style::default().fg(theme::DIM)));
+            }
+            // In a global search, show which manager each result came from.
+            if global {
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled(
+                    tool.manager.clone(),
+                    Style::default().fg(theme::YELLOW),
+                ));
+            }
 
-            ListItem::new(line)
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
